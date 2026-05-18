@@ -312,36 +312,89 @@ class BossFirefoxScraper:
 
         self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
         human_delay(3, 5)
-        self.human_scroll(3)
+        # 大幅滚动到底部，触发所有岗位详情加载
+        try:
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            human_delay(2, 3)
+            self.page.evaluate("window.scrollTo(0, 0)")
+            human_delay(1, 2)
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            human_delay(2, 3)
+        except:
+            pass
+        self.human_scroll(4)
         human_delay(1, 2)
 
         # 从 body 文本中提取岗位信息
         body = self.page.inner_text("body")
         lines = [l.strip() for l in body.split("\n") if l.strip()]
 
-        jobs = []
+        # 第一步：定位所有岗位的薪资行位置
+        salary_positions = []
         for i, line in enumerate(lines):
             decoded = decode_boss_salary(line)
             if re.search(r"\d+[-~]\d+K", decoded, re.I):
-                if i > 0 and lines[i - 1] and 2 < len(lines[i - 1]) < 60:
-                    title = lines[i - 1]
-                    salary = decoded
-                    company = ""
-                    experience = ""
-                    education = ""
-                    city = ""
-                    for j in range(i + 1, min(i + 5, len(lines))):
-                        ln = lines[j]
-                        if "经验" in ln or "应届" in ln:
-                            experience = ln
-                        elif "本科" in ln or "硕士" in ln or "博士" in ln or "大专" in ln or "学历不限" in ln:
-                            education = ln
-                        elif "·" in ln and len(ln) < 30:
-                            city = ln
-                        elif len(ln) > 2 and len(ln) < 40 and not re.search(r"年|学历|大专|本科|硕士|博士|不限|应届|·", ln) and not experience and not education:
-                            company = ln
-                    jobs.append({"title": title, "salary": salary, "company": company,
-                                "experience": experience, "education": education, "city": city, "href": ""})
+                salary_positions.append(i)
+
+        # 第二步：提取每个岗位的基本信息
+        jobs = []
+        for idx, si in enumerate(salary_positions):
+            if idx > 0 and si - salary_positions[idx-1] < 3:
+                continue  # 跳过重复的薪资行
+            if si == 0:
+                continue
+            title = lines[si - 1]
+            if not (2 < len(title) < 60):
+                continue
+            salary = decode_boss_salary(lines[si])
+            
+            company = ""
+            experience = ""
+            education = ""
+            city = ""
+            
+            # 找薪资行后面几行的信息
+            end_pos = salary_positions[idx + 1] if idx + 1 < len(salary_positions) else min(si + 10, len(lines))
+            for j in range(si + 1, min(end_pos, len(lines))):
+                ln = lines[j]
+                if "经验" in ln or "应届" in ln:
+                    experience = ln
+                elif "本科" in ln or "硕士" in ln or "博士" in ln or "大专" in ln or "学历不限" in ln:
+                    education = ln
+                elif "·" in ln and len(ln) < 30:
+                    city = ln
+                elif len(ln) > 2 and len(ln) < 40 and not re.search(r"年|学历|大专|本科|硕士|博士|不限|应届|·", ln) and not company:
+                    company = ln
+
+            jobs.append({"title": title, "salary": salary, "company": company,
+                        "experience": experience, "education": education, "city": city,
+                        "description": "", "href": ""})
+
+        # 第三步：从页面底部提取"职位描述"段落，关联到对应岗位
+        # 找到所有"职位描述"/"岗位职责"行的位置
+        desc_starts = [i for i, l in enumerate(lines) if "职位描述" in l or "岗位职责" in l]
+        # 找到每个描述段落的范围，往前关联到最近的薪资行
+        for ds in desc_starts:
+            # 找最近的薪资行（往前）
+            nearest_salary = -1
+            nearest_dist = 999
+            for si in salary_positions:
+                if si < ds and ds - si < nearest_dist:
+                    nearest_dist = ds - si
+                    nearest_salary = si
+            
+            if nearest_salary >= 0:
+                # 找到这个薪资行对应的岗位
+                for j in jobs:
+                    if j["salary"] == decode_boss_salary(lines[nearest_salary]) and lines[nearest_salary - 1] == j["title"]:
+                        # 收集描述文本（从"职位描述"到下一个"职位描述"或到页尾）
+                        desc_text = []
+                        for k in range(ds, min(ds + 50, len(lines))):
+                            if k != ds and ("职位描述" in lines[k] or "岗位职责" in lines[k]):
+                                break
+                            desc_text.append(lines[k])
+                        j["description"] = "\n".join(desc_text)
+                        break
 
         # 同时提取详情页链接
         links = self._extract_links_from_page(keyword)
