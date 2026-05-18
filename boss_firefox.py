@@ -553,24 +553,9 @@ def render_daily_report(jobs: list) -> str:
             lines.append("- 链接: %s" % j['url'])
         desc = j.get("description", "") or ""
         if desc:
-            tags_list = []
-            for cat, items in parse_jd_skills(desc).items():
-                tags_list.extend(items)
-            if tags_list:
-                tags_str = " ".join("`%s`" % t for t in tags_list[:12])
-                lines.append("- 技能: %s" % tags_str)
             lines.append("")
             lines.append(desc[:1200])
             lines.append("")
-        else:
-            title = j.get("title", "")
-            if title:
-                tags_list = []
-                for cat, items in parse_jd_skills(title).items():
-                    tags_list.extend(items)
-                if tags_list:
-                    tags_str = " ".join("`%s`" % t for t in tags_list[:5])
-                    lines.append("- 技能: %s" % tags_str)
         lines.append("---")
         lines.append("")
 
@@ -628,7 +613,7 @@ def main():
     parser.add_argument("--no-db", action="store_true")
     parser.add_argument("--quick", action="store_true", help="仅列表页，不爬详情")
     parser.add_argument("--max-jobs", type=int, default=64, help="最多采集岗位数")
-    parser.add_argument("--max-detail", type=int, default=0, help="最多爬详情页数（0=不爬详情，默认不爬）")
+    parser.add_argument("--max-detail", type=int, default=0, help="最多爬详情页数（0=不爬详情）")
     args = parser.parse_args()
 
     salary_min = args.salary_min
