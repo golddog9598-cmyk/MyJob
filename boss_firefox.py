@@ -327,12 +327,21 @@ class BossFirefoxScraper:
                     title = lines[i - 1]
                     salary = decoded
                     company = ""
-                    for j in range(i + 1, min(i + 4, len(lines))):
+                    experience = ""
+                    education = ""
+                    city = ""
+                    for j in range(i + 1, min(i + 5, len(lines))):
                         ln = lines[j]
-                        if len(ln) > 2 and len(ln) < 50 and not re.search(r"年|学历|大专|本科|硕士|博士|不限|应届", ln):
+                        if "经验" in ln or "应届" in ln:
+                            experience = ln
+                        elif "本科" in ln or "硕士" in ln or "博士" in ln or "大专" in ln or "学历不限" in ln:
+                            education = ln
+                        elif "·" in ln and len(ln) < 30:
+                            city = ln
+                        elif len(ln) > 2 and len(ln) < 40 and not re.search(r"年|学历|大专|本科|硕士|博士|不限|应届|·", ln) and not experience and not education:
                             company = ln
-                            break
-                    jobs.append({"title": title, "salary": salary, "company": company, "href": ""})
+                    jobs.append({"title": title, "salary": salary, "company": company,
+                                "experience": experience, "education": education, "city": city, "href": ""})
 
         # 同时提取详情页链接
         links = self._extract_links_from_page(keyword)
@@ -532,23 +541,37 @@ def render_daily_report(jobs: list) -> str:
         lines.append("\n---\n")
 
     for i, j in enumerate(jobs, 1):
-        lines.append(f"### {i}. {j['title']}")
-        lines.append(f"- 公司: {j.get('company', '未显示')}")
-        lines.append(f"- 薪资: {j['salary']}")
+        lines.append("### %d. %s" % (i, j['title']))
+        lines.append("- 公司: %s" % (j.get('company', '未显示')))
+        lines.append("- 薪资: %s" % j['salary'])
+        if j.get("city"):
+            lines.append("- 城市: %s" % j['city'])
         if j.get("experience"):
-            lines.append(f"- 经验: {j['experience']}")
+            lines.append("- 经验: %s" % j['experience'])
         if j.get("education"):
-            lines.append(f"- 学历: {j['education']}")
+            lines.append("- 学历: %s" % j['education'])
         desc = j.get("description", "") or ""
         if desc:
-            skills = parse_jd_skills(desc)
-            if skills:
-                tags = []
-                for cat, items in skills.items():
-                    tags.extend(items)
-                lines.append(f"- 技能: {' '.join(f'`{t}`' for t in tags[:8])}")
-            lines.append(f"\n{desc[:300]}\n")
-        lines.append("---\n")
+            tags_list = []
+            for cat, items in parse_jd_skills(desc).items():
+                tags_list.extend(items)
+            if tags_list:
+                tags_str = " ".join("`%s`" % t for t in tags_list[:12])
+                lines.append("- 技能: %s" % tags_str)
+            lines.append("")
+            lines.append(desc[:800])
+            lines.append("")
+        else:
+            title = j.get("title", "")
+            if title:
+                tags_list = []
+                for cat, items in parse_jd_skills(title).items():
+                    tags_list.extend(items)
+                if tags_list:
+                    tags_str = " ".join("`%s`" % t for t in tags_list[:5])
+                    lines.append("- 技能: %s" % tags_str)
+        lines.append("---")
+        lines.append("")
 
     lines.append(f"\n*数据采集于 {DATE_STR}，BOSS直聘*\n")
     return "\n".join(lines)
@@ -604,7 +627,7 @@ def main():
     parser.add_argument("--no-db", action="store_true")
     parser.add_argument("--quick", action="store_true", help="仅列表页，不爬详情")
     parser.add_argument("--max-jobs", type=int, default=64, help="最多采集岗位数")
-    parser.add_argument("--max-detail", type=int, default=5, help="每关键词最多爬详情数（0=不爬详情）")
+    parser.add_argument("--max-detail", type=int, default=64, help="最多爬详情页数（默认全部爬）")
     args = parser.parse_args()
 
     salary_min = args.salary_min
@@ -658,8 +681,9 @@ def main():
                 "title": link["title"],
                 "salary": link.get("salary", ""),
                 "company": link.get("company", ""),
-                "experience": "",
-                "education": "",
+                "experience": link.get("experience", ""),
+                "education": link.get("education", ""),
+                "city": link.get("city", ""),
                 "description": "",
                 "tags": [],
                 "keyword": kw,
@@ -682,7 +706,7 @@ def main():
         if not args.quick:
             print("\n🔍 开始爬取岗位详情（模拟人工浏览，每页停留 3-5 秒）...")
             detail_count = 0
-            detail_limit = min(args.max_detail * len(keywords), len(all_jobs), args.max_jobs)
+            detail_limit = min(args.max_detail, len(all_jobs))
 
             for i, job in enumerate(all_jobs):
                 if detail_count >= detail_limit:
