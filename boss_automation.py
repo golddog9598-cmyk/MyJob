@@ -47,31 +47,31 @@ SELECTORS = {
         'div:has-text("立即沟通")',
     ],
     "chat_input": [
-        '#chat-input',
+        "#chat-input",
         'div[contenteditable="true"]',
         '[class*="chat-input"]',
         '[placeholder*="请输入"]',
     ],
     "chat_send_button": [
         'button[type="send"]',
-        '.btn-send',
+        ".btn-send",
         'button:has-text("发送")',
         'button[class*="send"]',
     ],
     "conversation_items": [
         'li[role="listitem"]',
-        '.friend-content',
+        ".friend-content",
         '[class*="chat-item"]',
     ],
     "message_items_in_chat": [
-        'li.message-item',
+        "li.message-item",
         'li[class*="message-item"]',
         '[class*="message-item"]',
     ],
     "unread_badge": [
         '[class*="unread"]',
         '[class*="badge"]',
-        '.red-dot',
+        ".red-dot",
     ],
     "greeting_dialog_close": [
         'button[class*="close"]',
@@ -86,14 +86,20 @@ SELECTORS = {
         'button:has-text("发简历")',
         'span:has-text("发简历")',
     ],
+    "resume_confirm_btn": [
+        ".btn-sure-v2.btn-confirm",
+        ".choose-resume-dialog .btn-confirm",
+        'button:has-text("发送")',
+        '.boss-popup__content button:has-text("发送")',
+    ],
     "wechat_share_btn": [
-        '.btn-weixin',
+        ".btn-weixin",
         'div:has-text("换微信")',
         'span:has-text("换微信")',
         '[class*="btn-weixin"]',
     ],
     "phone_share_btn": [
-        '.btn-contact',
+        ".btn-contact",
         'div:has-text("换电话")',
         'span:has-text("换电话")',
         '[class*="btn-contact"]',
@@ -112,6 +118,7 @@ def _merge_selectors():
     try:
         from boss_state import get_setting
         import json as _json
+
         raw = get_setting("selector_overrides", "")
         if raw:
             overrides = _json.loads(raw)
@@ -267,6 +274,7 @@ class BossAutomation(BossScraper):
         """保存当前浏览器状态到文件。"""
         try:
             from boss_firefox import STATE_FILE
+
             state = self._ctx.storage_state()
             STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -333,7 +341,7 @@ class BossAutomation(BossScraper):
 
             # 等待聊天窗口加载
             chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=5000)
-            
+
             # 发送招呼语
             greeting_text = greeting or get_setting(
                 "greeting_template",
@@ -368,6 +376,7 @@ class BossAutomation(BossScraper):
             job_title = ""
             try:
                 from boss_firefox import BossScraper
+
                 hr_info = self.page.evaluate("""() => {
                     const body = (document.body || {}).innerText || '';
                     const lines = body.split('\\n').map(l => l.trim()).filter(Boolean);
@@ -463,12 +472,13 @@ class BossAutomation(BossScraper):
                         continue
                     # 从 BOSS 真实结构提取 HR 名字: .name-text
                     try:
-                        hr_name = el.locator('.name-text').first.inner_text().strip()
+                        hr_name = el.locator(".name-text").first.inner_text().strip()
                     except Exception:
                         hr_name = ""
                     if not hr_name:
                         # 兜底：从 body_text 行中提取
-                        hr_name = el.evaluate("""(el) => {
+                        hr_name = (
+                            el.evaluate("""(el) => {
                             const lines = (el.innerText||'').split('\\n').map(l=>l.trim()).filter(Boolean);
                             for (const l of lines) {
                                 if (/^\\d{1,2}:\\d{2}$/.test(l)) continue;
@@ -477,16 +487,23 @@ class BossAutomation(BossScraper):
                                 if (ch.length>=2 && ch.length<=5) return l.split(/[\\s|·]/)[0].trim();
                             }
                             return '';
-                        }""") or ""
+                        }""")
+                            or ""
+                        )
                     has_unread = False
                     try:
                         badge = el.locator('.red-dot, [class*="unread"]').first
                         has_unread = badge.is_visible()
                     except Exception:
                         pass
-                    conversations.append({
-                        "text": text, "has_unread": has_unread, "element": el, "hr_name": hr_name,
-                    })
+                    conversations.append(
+                        {
+                            "text": text,
+                            "has_unread": has_unread,
+                            "element": el,
+                            "hr_name": hr_name,
+                        }
+                    )
                 except Exception:
                     continue
 
@@ -494,23 +511,29 @@ class BossAutomation(BossScraper):
         if not conversations:
             try:
                 body = self.page.inner_text("body") or ""
-                pattern = r'(\d{1,2}:\d{2})\s+([\u4e00-\u9fff\w·]+?)\s+(\[\s*\S+\s*\])\s+(.+?)(?=\s*\d{1,2}:\d{2}\s+|没有更多了|\Z)'
+                pattern = r"(\d{1,2}:\d{2})\s+([\u4e00-\u9fff\w·]+?)\s+(\[\s*\S+\s*\])\s+(.+?)(?=\s*\d{1,2}:\d{2}\s+|没有更多了|\Z)"
                 for m in re.findall(pattern, body):
                     time_str, name_block, status, msg = m
                     # 提取纯名字：从 name_block 中去掉公司后缀
-                    hr_name = re.sub(r'[\u4e00-\u9fff]{2,}(?:有限|集团|科技|网络|信息|文化|教育|医疗|能源|贸易|实业|发展|控股|投资).*|经理.*|主管.*|专员.*|总监.*|[\[\]].*', '', name_block).strip()
+                    hr_name = re.sub(
+                        r"[\u4e00-\u9fff]{2,}(?:有限|集团|科技|网络|信息|文化|教育|医疗|能源|贸易|实业|发展|控股|投资).*|经理.*|主管.*|专员.*|总监.*|[\[\]].*",
+                        "",
+                        name_block,
+                    ).strip()
                     if not hr_name or len(hr_name) < 2:
-                        m2 = re.match(r'^[\u4e00-\u9fff]{2,4}', name_block)
+                        m2 = re.match(r"^[\u4e00-\u9fff]{2,4}", name_block)
                         hr_name = m2.group(0) if m2 else name_block[:6]
                     hr_name = hr_name.strip()
                     if not hr_name or len(hr_name) < 2:
                         continue
-                    conversations.append({
-                        "text": f"{time_str}\n{name_block}\n{status}\n{msg}".strip(),
-                        "has_unread": "未读" in status,
-                        "element": None,
-                        "hr_name": hr_name,
-                    })
+                    conversations.append(
+                        {
+                            "text": f"{time_str}\n{name_block}\n{status}\n{msg}".strip(),
+                            "has_unread": "未读" in status,
+                            "element": None,
+                            "hr_name": hr_name,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -638,7 +661,7 @@ class BossAutomation(BossScraper):
         try:
             # 点击输入框激活
             try:
-                self.page.locator('#chat-input').first.click()
+                self.page.locator("#chat-input").first.click()
                 time.sleep(0.15)
             except Exception:
                 try:
@@ -687,7 +710,7 @@ class BossAutomation(BossScraper):
     def _get_chat_security_id(self, hr_name: str = "") -> str:
         """从 BOSS API 或页面提取对方 securityId。"""
         import re
-        
+
         for attempt in range(3):  # 重试3次
             try:
                 # 方式1: 页面 HTML 正则搜
@@ -724,10 +747,13 @@ class BossAutomation(BossScraper):
 
                 if encrypt_id and hr_name:
                     url = f"https://www.zhipin.com/wapi/zprelation/friend/geekFilterByLabel?labelId=0&encryptSystemId={encrypt_id}"
-                    data = self.page.evaluate("""async (url) => {
+                    data = self.page.evaluate(
+                        """async (url) => {
                         const r = await fetch(url, {headers:{'Accept':'application/json','x-requested-with':'XMLHttpRequest'}, credentials:'include'});
                         return await r.json();
-                    }""", url)
+                    }""",
+                        url,
+                    )
                     friends = (data or {}).get("zpData", {}).get("friends", [])
                     for f in friends:
                         fn = (f.get("bossName") or f.get("realName") or "").strip()
@@ -735,14 +761,14 @@ class BossAutomation(BossScraper):
                             return f.get("securityId", "")
 
                 if attempt < 2:
-                    print(f"  [securityId] 第{attempt+1}次获取失败，重试...")
+                    print(f"  [securityId] 第{attempt + 1}次获取失败，重试...")
                     pause(1, 2)
-                    
+
             except Exception as e:
                 print(f"  [securityId] 获取异常: {e}")
                 if attempt < 2:
                     pause(1, 2)
-        
+
         print(f"  ⚠️ securityId 获取失败（3次重试），HR: {hr_name}")
         return ""
 
@@ -752,7 +778,8 @@ class BossAutomation(BossScraper):
             sid = self._get_chat_security_id(hr_name)
 
             if sid:
-                self.page.evaluate("""
+                self.page.evaluate(
+                    """
                     async (sid) => {
                         await fetch('https://www.zhipin.com/wapi/zpchat/exchange/test', {
                             method: 'POST',
@@ -761,7 +788,9 @@ class BossAutomation(BossScraper):
                             credentials: 'include',
                         });
                     }
-                """, sid)
+                """,
+                    sid,
+                )
                 print("  [换微信] API /exchange/test 已调用")
             else:
                 btn = self._find_element(SELECTORS["wechat_share_btn"], timeout_ms=5000)
@@ -821,7 +850,8 @@ class BossAutomation(BossScraper):
             sid = self._get_chat_security_id(hr_name)
 
             if sid:
-                self.page.evaluate("""
+                self.page.evaluate(
+                    """
                     async (sid) => {
                         await fetch('https://www.zhipin.com/wapi/zpchat/exchange/test', {
                             method: 'POST',
@@ -830,7 +860,9 @@ class BossAutomation(BossScraper):
                             credentials: 'include',
                         });
                     }
-                """, sid)
+                """,
+                    sid,
+                )
                 print("  [换电话] API /exchange/test (type=1) 已调用")
             else:
                 btn = self._find_element(SELECTORS["phone_share_btn"], timeout_ms=5000)
@@ -883,7 +915,7 @@ class BossAutomation(BossScraper):
             return False
 
     def send_resume(self) -> bool:
-        """点击「发简历」按钮发送附件简历。"""
+        """点击「发简历」按钮，等弹窗后点「发送」确认。"""
         try:
             btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=5000)
             if not btn:
@@ -893,31 +925,16 @@ class BossAutomation(BossScraper):
             print("  [发简历] 已点击发简历按钮")
             pause(1, 2)
 
-            # 等弹窗 → 点「确定」
-            confirm_clicked = self.page.evaluate("""() => {
-                return new Promise((resolve) => {
-                    let tries = 0;
-                    const check = () => {
-                        const btns = document.querySelectorAll('span, button');
-                        for (const b of btns) {
-                            const t = (b.innerText || '').trim();
-                            if ((t === '确定' || t === '发送' || t === '确认') && b.offsetParent !== null && !b.closest('.btn-outline-v2')) {
-                                b.click();
-                                resolve(true);
-                                return;
-                            }
-                        }
-                        if (++tries < 20) setTimeout(check, 500);
-                        else resolve(false);
-                    };
-                    check();
-                });
-            }""")
-            if confirm_clicked:
+            # 等弹窗出现 → 点「发送」按钮
+            confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=5000)
+            if confirm:
+                confirm.click()
                 pause(0.5, 1)
-                print("  [发简历] 已确认发送")
+                print("  [发简历] 已点发送按钮")
                 return True
-            print("  [发简历] 无需确认或已完成")
+
+            # 兜底：无弹窗但已点击
+            print("  [发简历] 无弹窗，直接完成")
             return True
         except Exception as e:
             print(f"  ⚠️ send_resume 失败: {e}")
@@ -970,6 +987,7 @@ class BossAutomation(BossScraper):
             pass
 
         from boss_state import list_active_conversations
+
         known_convs = list_active_conversations()
         print(f"  [监控] 数据库已知活跃会话: {len(known_convs)}")
 
@@ -1011,10 +1029,33 @@ class BossAutomation(BossScraper):
                 hr_name = hr_name[:20] if len(hr_name) > 20 else hr_name
 
                 # 过滤无效名称
-                skip_keywords = ["消息", "联系人", "沟通", "设置", "搜索", "我的", "首页",
-                                 "已沟通", "继续沟通", "新对话", "系统", "通知", "BOSS",
-                                 "在线", "离线", "刚刚", "分钟", "小时", "昨天",
-                                 "简历", "附件", "上传", "制作", "更新", "AI"]
+                skip_keywords = [
+                    "消息",
+                    "联系人",
+                    "沟通",
+                    "设置",
+                    "搜索",
+                    "我的",
+                    "首页",
+                    "已沟通",
+                    "继续沟通",
+                    "新对话",
+                    "系统",
+                    "通知",
+                    "BOSS",
+                    "在线",
+                    "离线",
+                    "刚刚",
+                    "分钟",
+                    "小时",
+                    "昨天",
+                    "简历",
+                    "附件",
+                    "上传",
+                    "制作",
+                    "更新",
+                    "AI",
+                ]
                 is_valid = (
                     hr_name
                     and len(hr_name) >= 2
@@ -1026,7 +1067,9 @@ class BossAutomation(BossScraper):
                     print(f"  [监控] 跳过无效会话名: '{hr_name}' (原文: {text[:50]})")
                     continue
 
-                conv_id = get_or_create_conversation(None, hr_name, conv_data.get("company", ""), conv_data.get("job_title", ""))
+                conv_id = get_or_create_conversation(
+                    None, hr_name, conv_data.get("company", ""), conv_data.get("job_title", "")
+                )
                 known_convs = list_active_conversations()
                 matched_conv = get_conversation(conv_id)
                 if not matched_conv:
@@ -1039,9 +1082,12 @@ class BossAutomation(BossScraper):
                 # 提取的名字比 DB 更精确时自动修正
                 if extracted_name and len(extracted_name) >= 2:
                     old_name = matched_conv.get("hr_name", "")
-                    if old_name != extracted_name and (old_name in extracted_name or extracted_name in old_name or len(extracted_name) < len(old_name)):
+                    if old_name != extracted_name and (
+                        old_name in extracted_name or extracted_name in old_name or len(extracted_name) < len(old_name)
+                    ):
                         try:
                             from boss_state import get_db as _gdb2
+
                             _gdb2().execute("UPDATE conversations SET hr_name=? WHERE id=?", (extracted_name, conv_id))
                             _gdb2().commit()
                             matched_conv["hr_name"] = extracted_name
@@ -1052,17 +1098,19 @@ class BossAutomation(BossScraper):
             if not matched_conv.get("hr_company"):
                 company_info = text.split("\n")[0] if "\n" in text else text
                 import re as _re3
+
                 hr_name_part = matched_conv.get("hr_name", "")
                 if hr_name_part and len(hr_name_part) >= 2:
                     company_info = company_info.replace(hr_name_part, "", 1)
                 # 去掉时间/状态/括号等
-                company_info = _re3.sub(r'\d{1,2}:\d{2}|\[.*?\]|送达|已读|未读', '', company_info)
+                company_info = _re3.sub(r"\d{1,2}:\d{2}|\[.*?\]|送达|已读|未读", "", company_info)
                 # 提取公司名（纯中文 4-12字）
-                m = _re3.search(r'[\u4e00-\u9fa5]{4,12}', company_info)
+                m = _re3.search(r"[\u4e00-\u9fa5]{4,12}", company_info)
                 if m:
                     company = m.group()
                     try:
                         from boss_state import get_db as _gdb3
+
                         _gdb3().execute("UPDATE conversations SET hr_company=? WHERE id=?", (company, conv_id))
                         _gdb3().commit()
                         matched_conv["hr_company"] = company
@@ -1079,7 +1127,7 @@ class BossAutomation(BossScraper):
             hr_name_to_open = matched_conv["hr_name"]
             opened = self.open_conversation_by_name(hr_name_to_open)
             if not opened and len(hr_name_to_open) > 4:
-                short = re.match(r'^[\u4e00-\u9fff]{2,3}', hr_name_to_open)
+                short = re.match(r"^[\u4e00-\u9fff]{2,3}", hr_name_to_open)
                 if short:
                     opened = self.open_conversation_by_name(short.group(0))
             if not opened:
@@ -1106,12 +1154,13 @@ class BossAutomation(BossScraper):
                 # 从 HR 消息里提取微信号
                 if not matched_conv.get("hr_wechat"):
                     import re as _re
+
                     for m in clean_msgs:
                         if m["sender"] == "hr":
                             patterns = [
-                                r'(?:微信|VX|vx|V|WeChat)[号：:]*\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})',
-                                r'(?:加我|加V|找V)\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})',
-                                r'微信号\s+([a-zA-Z][a-zA-Z0-9_-]{4,30})',
+                                r"(?:微信|VX|vx|V|WeChat)[号：:]*\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})",
+                                r"(?:加我|加V|找V)\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})",
+                                r"微信号\s+([a-zA-Z][a-zA-Z0-9_-]{4,30})",
                             ]
                             for pat in patterns:
                                 match = _re.search(pat, m["content"])
@@ -1128,9 +1177,17 @@ class BossAutomation(BossScraper):
                 content = content.strip()
                 if len(content) > 80:
                     return False
-                patterns = ("你与该职位竞争者PK情况", "竞争力分析", "BOSS安全提示",
-                           "系统消息", "沟通分析", "今日推荐", "该Boss已查看了你的简历")
+                patterns = (
+                    "你与该职位竞争者PK情况",
+                    "竞争力分析",
+                    "BOSS安全提示",
+                    "系统消息",
+                    "沟通分析",
+                    "今日推荐",
+                    "该Boss已查看了你的简历",
+                )
                 return any(content.startswith(p) for p in patterns)
+
             unreplied_hr_msg = None
             for i in range(len(clean_msgs) - 1, -1, -1):
                 m = clean_msgs[i]
@@ -1139,10 +1196,7 @@ class BossAutomation(BossScraper):
                 if _is_system_notification(m["content"]):
                     continue
                 # HR 消息
-                has_reply_after = any(
-                    clean_msgs[j]["sender"] == "me"
-                    for j in range(i + 1, len(clean_msgs))
-                )
+                has_reply_after = any(clean_msgs[j]["sender"] == "me" for j in range(i + 1, len(clean_msgs)))
                 if not has_reply_after:
                     unreplied_hr_msg = m["content"]
                     new_count = 1
@@ -1168,6 +1222,7 @@ class BossAutomation(BossScraper):
                     app_id = matched_conv.get("application_id")
                     if app_id:
                         from boss_state import get_application
+
                         app = get_application(app_id)
                         if app:
                             job_desc = app.get("description") or ""
@@ -1183,39 +1238,49 @@ class BossAutomation(BossScraper):
                     resume = get_setting("resume_summary", "")
                     wechat = get_setting("wechat_id", "")
 
-                    reply, interest = generate_reply(
-                        conv_id, unreplied_hr_msg, job_info, style, resume, wechat
-                    )
+                    reply, interest = generate_reply(conv_id, unreplied_hr_msg, job_info, style, resume, wechat)
                     if reply:
                         # 先执行发送操作（简历/微信/电话），确保AI说"已发送"时东西已经发出去了
                         msg_lower = unreplied_hr_msg.lower()
-                        
+
                         # 发简历：HR明确要求简历时，且未发送过
                         if any(kw in msg_lower for kw in ("简历", "cv", "resume")):
                             if not matched_conv.get("resume_sent"):
                                 print(f"  [监控] HR要简历，正在发送...")
                                 if self.send_resume():
                                     from boss_state import mark_resume_sent
+
                                     mark_resume_sent(conv_id)
                                     pause(1, 2)
-                        
+
                         # 换微信：HR主动要联系方式时（排除"保持联系"等模糊表达）
-                        wechat_keywords = ("加微信", "加个微信", "微信聊", "vx", "加v", "v我", "加个v", "微信号", "换微信")
+                        wechat_keywords = (
+                            "加微信",
+                            "加个微信",
+                            "微信聊",
+                            "vx",
+                            "加v",
+                            "v我",
+                            "加个v",
+                            "微信号",
+                            "换微信",
+                        )
                         if any(kw in msg_lower for kw in wechat_keywords):
                             if not matched_conv.get("hr_wechat"):
                                 print(f"  [监控] HR要微信，正在发送...")
                                 self.send_wechat(hr_name_to_open)
                                 pause(1, 2)
-                        
+
                         # 换电话：HR明确要电话时，且未发送过
                         if any(kw in msg_lower for kw in ("电话", "手机号")):
                             if not matched_conv.get("phone_shared"):
                                 print(f"  [监控] HR要电话，正在发送...")
                                 if self.send_phone(hr_name_to_open):
                                     from boss_state import mark_phone_shared
+
                                     mark_phone_shared(conv_id)
                                     pause(1, 2)
-                        
+
                         # 然后再发送AI回复
                         print(f"  [监控] AI回复: {reply[:60]}...")
                         if self.send_message(reply):
@@ -1237,7 +1302,7 @@ class BossAutomation(BossScraper):
 
             # 下一个会话前确保输入框已清空，避免残留文字
             try:
-                input_el = self.page.locator('#chat-input').first
+                input_el = self.page.locator("#chat-input").first
                 text = input_el.inner_text().strip()
                 if text:
                     print(f"  [监控] 输入框残留文字「{text[:30]}...」，正在清空")
