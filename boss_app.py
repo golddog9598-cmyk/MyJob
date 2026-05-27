@@ -356,6 +356,33 @@ def get_stats():
     }
 
 
+@app.get("/api/doctor")
+def doctor():
+    """诊断环境：Python版本、浏览器状态、登录态、AI配置等。"""
+    import os
+    import sys as _sys
+
+    try:
+        _sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import DEEPSEEK_API_KEY, DEEPSEEK_BASE
+
+        ai_key_ok = bool(DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 10)
+    except Exception:
+        ai_key_ok = False
+
+    browser_ok = automation is not None and automation.page is not None
+    checks = {
+        "python": {"ok": True, "detail": _sys.version.split()[0]},
+        "browser": {"ok": browser_ok, "detail": "运行中" if browser_ok else "未启动"},
+        "boss_login": {"ok": browser_ok, "detail": "已登录" if browser_ok else "未登录"},
+        "ai_key": {"ok": ai_key_ok, "detail": "已配置" if ai_key_ok else "未配置"},
+        "today_applications": get_today_application_count(),
+        "pending_jobs": get_today_pending_count(),
+    }
+    all_ok = all(v.get("ok", True) for v in checks.values())
+    return {"ok": all_ok, "checks": checks}
+
+
 @app.post("/api/system/start")
 async def start_automation():
     global automation, monitor_task
