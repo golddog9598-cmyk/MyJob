@@ -142,6 +142,17 @@ def login_cmd():
     output.emit(result)
 
 
+# ── AI JD分析 ──
+@main.command("analyze")
+@click.argument("job_url")
+@click.option("--title", default="", help="岗位名称")
+@click.option("--company", default="", help="公司名")
+@click.option("--desc", default="", help="JD描述")
+def analyze_cmd(job_url, title, company, desc):
+    resp = client.analyze(job_url, title, company, desc)
+    output.emit(output.ok_or_fail(resp, "analyze"))
+
+
 # ── 服务管理 ──
 @main.command("server")
 @click.option("--start", is_flag=True, help="启动后台服务")

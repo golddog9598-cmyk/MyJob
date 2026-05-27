@@ -259,6 +259,13 @@ class ApplyBatchRequest(BaseModel):
     greeting: Optional[str] = None
 
 
+class AnalyzeRequest(BaseModel):
+    job_url: str
+    job_title: Optional[str] = ""
+    company: Optional[str] = ""
+    description: Optional[str] = ""
+
+
 class SendMessageRequest(BaseModel):
     content: str
 
@@ -697,6 +704,49 @@ async def apply_batch(req: ApplyBatchRequest):
         }
     )
     return {"results": results}
+
+
+@app.post("/api/jobs/analyze")
+async def analyze_jd(req: AnalyzeRequest):
+    """AI分析岗位JD，返回匹配度、关键技能、差距、建议。"""
+    resume = get_setting("resume_summary", "")
+    desc = req.description or ""
+    title = req.job_title or ""
+    company = req.company or ""
+
+    prompt = f"""你是求职辅导专家。分析以下岗位JD，对比求职者简历，输出JSON。
+
+## 求职者简历
+{resume}
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:2000]}
+
+## 输出格式（严格JSON）
+{{
+  "match_score": 85,
+  "key_skills": ["Python", "LangChain", "RAG"],
+  "gap": "缺少K8s部署经验",
+  "advice": "建议强调Agent开发经验，问对方技术栈",
+  "summary": "整体匹配度较高，注意补充部署相关经验"
+}}"""
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职辅导专家，输出严格JSON。",
+            temperature=0.3,
+        )
+        import json
+
+        return json.loads(raw.strip().strip("`").strip("json").strip())
+    except Exception as e:
+        return {"error": f"AI分析失败: {e}", "match_score": 0, "summary": "请检查AI配置"}
 
 
 # ══════════════════════════════════════

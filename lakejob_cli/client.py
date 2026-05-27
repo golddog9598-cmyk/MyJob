@@ -67,3 +67,7 @@ def doctor():
 
 def relogin():
     return _post("/api/system/relogin")
+
+
+def analyze(job_url: str, title: str = "", company: str = "", desc: str = ""):
+    return _post("/api/jobs/analyze", {"job_url": job_url, "job_title": title, "company": company, "description": desc})
