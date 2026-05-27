@@ -1158,9 +1158,14 @@ class BossAutomation(BossScraper):
                     for m in clean_msgs:
                         if m["sender"] == "hr":
                             patterns = [
-                                r"(?:微信|VX|vx|V|WeChat)[号：:]*\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})",
-                                r"(?:加我|加V|找V)\s*[:：]?\s*([a-zA-Z][a-zA-Z0-9_-]{4,30})",
-                                r"微信号\s+([a-zA-Z][a-zA-Z0-9_-]{4,30})",
+                                # wxid_xxxxxxxx 格式
+                                r"(?:wxid|WXID)[_\-]?\s*[:：]?\s*([a-zA-Z0-9_-]{6,30})",
+                                # 微信/VX/WeChat：xxx 格式
+                                r"(?:微信|VX|vx|wechat|WeChat)[号：:]*\s*[:：]?\s*([a-zA-Z0-9_-]{4,30})",
+                                # 加我/加V -> xxx
+                                r"(?:加我|加V|找V|加个V)\s*[:：]?\s*([a-zA-Z0-9_-]{4,30})",
+                                # 微信号 xxx（纯中文前缀）
+                                r"\u5fae\u4fe1\u53f7\s+([a-zA-Z0-9_-]{4,30})",
                             ]
                             for pat in patterns:
                                 match = _re.search(pat, m["content"])
@@ -1169,6 +1174,7 @@ class BossAutomation(BossScraper):
                                     if wx_id and len(wx_id) >= 5:
                                         update_conversation_wechat(conv_id, wx_id)
                                         matched_conv["hr_wechat"] = wx_id
+                                        result["wechat_exchanged"] = True
                                         print(f"  [监控] 提取HR微信: {wx_id}")
                                         break
 

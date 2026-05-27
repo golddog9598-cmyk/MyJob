@@ -261,7 +261,7 @@ td a:hover{text-decoration:underline}
         <div class="setting-row"><label>平台</label><select id="setAIPlatform" onchange="onPlatformChange()"><option value="">-- 选择平台 --</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="mimo">小米MiMo</option><option value="custom">自定义</option></select></div>
         <div class="setting-row"><label>API Key</label><input type="password" id="setAIApiKey" placeholder="输入API Key"><span id="aiKeyStatus" style="font-size:11px;margin-left:4px;"></span></div>
         <div class="setting-row"><label>Base URL</label><input type="text" id="setAIBaseUrl" placeholder="自动填充"></div>
-        <div class="setting-row"><label>模型</label><select id="setAIModel"><option value="">-- 选择模型 --</option></select></div>
+        <div class="setting-row"><label>模型</label><input type="text" id="setAIModel" list="modelList" placeholder="选择或输入模型名" style="flex:1;"><datalist id="modelList"></datalist></div>
         <div class="setting-row"><label>自动回复</label><select id="setAutoReply"><option value="true">开启</option><option value="false">关闭</option></select></div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px;">选择平台后自动填充Base URL和可选模型列表</div>
       </div>
@@ -287,7 +287,7 @@ function switchTab(tab){
   document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'投递记录',chat:'聊天',wechat:'微信记录',settings:'设置'}[tab]||'';
   if(tab==='applications')loadApplications();
   if(tab==='chat')loadConversations();
-  if(tab==='wechat')loadWechatExchanges();
+  if(tab==='wechat'){loadWechatExchanges();startWechatAutoRefresh();}else{stopWechatAutoRefresh();}
 }
 document.querySelectorAll('#sideNav a').forEach(a=>a.addEventListener('click',()=>switchTab(a.dataset.tab)));
 
@@ -316,6 +316,7 @@ function handleWS(msg){
       if(activeConvId)loadMessages(activeConvId);break;
     case'session_expired':document.getElementById('sessionStatus').textContent='登录已过期';break;
     case'relogin_ok':document.getElementById('sessionStatus').textContent='登录态正常';break;
+    case'wechat_exchanged':if(activeTab==='wechat')loadWechatExchanges();break;
     case'monitor_paused':case'monitor_resumed':case'system':refreshStatus();break;
   }
 }
@@ -479,6 +480,13 @@ function loadWechatExchanges(){
     }).join('');
   });
 }
+// 微信记录每30秒自动刷新
+let wechatRefreshTimer=null;
+function startWechatAutoRefresh(){
+  stopWechatAutoRefresh();
+  wechatRefreshTimer=setInterval(()=>{if(activeTab==='wechat')loadWechatExchanges();},30000);
+}
+function stopWechatAutoRefresh(){if(wechatRefreshTimer){clearInterval(wechatRefreshTimer);wechatRefreshTimer=null;}}
 function copyWechat(text,btn){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500);});}
 
 function batchApplyAll(){
@@ -541,12 +549,14 @@ function saveSettings(){
     refreshStatus();
   });
 }
-const PLATFORMS={deepseek:{baseUrl:'https://api.deepseek.com/v1',models:[{v:'deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek-reasoner',t:'DeepSeek Reasoner'}]},openrouter:{baseUrl:'https://openrouter.ai/api/v1',models:[{v:'openrouter/auto',t:'Auto'},{v:'deepseek/deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek/deepseek-r1',t:'DeepSeek R1'},{v:'anthropic/claude-sonnet-4',t:'Claude Sonnet 4'},{v:'google/gemini-2.5-flash',t:'Gemini 2.5 Flash'}]},mimo:{baseUrl:'https://token-plan-sgp.xiaomimimo.com/v1',models:[{v:'mi-undefined',t:'MiMo'}]},custom:{baseUrl:'',models:[]}};
+const PLATFORMS={deepseek:{baseUrl:'https://api.deepseek.com/v1',models:[{v:'deepseek-v4-pro',t:'DeepSeek V4 Pro'},{v:'deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek-reasoner',t:'DeepSeek Reasoner'}]},openrouter:{baseUrl:'https://openrouter.ai/api/v1',models:[{v:'openrouter/auto',t:'Auto'},{v:'deepseek/deepseek-chat',t:'DeepSeek Chat'},{v:'deepseek/deepseek-r1',t:'DeepSeek R1'},{v:'anthropic/claude-sonnet-4',t:'Claude Sonnet 4'},{v:'google/gemini-2.5-flash',t:'Gemini 2.5 Flash'}]},mimo:{baseUrl:'https://token-plan-sgp.xiaomimimo.com/v1',models:[{v:'mi-undefined',t:'MiMo'}]},custom:{baseUrl:'',models:[]}};
 function onPlatformChange(){
   let plat=document.getElementById('setAIPlatform').value,cfg=PLATFORMS[plat];if(!cfg)return;
   document.getElementById('setAIBaseUrl').value=cfg.baseUrl;
-  let sel=document.getElementById('setAIModel');sel.innerHTML='<option value="">-- 选择模型 --</option>';
-  if(cfg.models.length){cfg.models.forEach(m=>sel.innerHTML+='<option value="'+m.v+'">'+m.t+'</option>');sel.value=cfg.models[0].v;}
+  let dl=document.getElementById('modelList'),input=document.getElementById('setAIModel');
+  dl.innerHTML='';
+  if(cfg.models.length){cfg.models.forEach(m=>dl.innerHTML+='<option value="'+m.v+'">'+m.t+'</option>');input.value=cfg.models[0].v;input.placeholder='选择或输入模型名';}
+  else{input.value='';input.placeholder='输入模型名...';}
 }
 </script>
 </body>

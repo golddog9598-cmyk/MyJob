@@ -1146,6 +1146,8 @@ async def chat_monitor_loop():
                 )
             if result.get("new_conversations"):
                 await broadcast_ws({"type": "new_messages"})
+            if result.get("wechat_exchanged"):
+                await broadcast_ws({"type": "wechat_exchanged"})
 
             safety_ok = await _run_pw(automation.check_page_safety)
             if not safety_ok:
@@ -1178,7 +1180,7 @@ def main():
     import uvicorn
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8010)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--auto-start", action="store_true", help="启动时自动打开浏览器")
     args = parser.parse_args()
