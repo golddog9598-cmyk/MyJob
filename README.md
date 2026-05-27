@@ -8,9 +8,11 @@
 
 [![Python](https://img.shields.io/badge/Python-≥3.10-3776AB?logo=python&logoColor=white&style=flat-square)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/longnull-ck/lakejobai-job-radar?style=flat-square)](https://github.com/longnull-ck/lakejobai-job-radar/releases)
+[![Contributors](https://img.shields.io/github/contributors/longnull-ck/lakejobai-job-radar?style=flat-square)](https://github.com/longnull-ck/lakejobai-job-radar/graphs/contributors)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/longnull-ck/lakejobai-job-radar/pulls)
 
-[快速开始](#-快速开始) · [安装](#-安装) · [核心能力](#-核心能力) · [AI 模型配置](#-ai-模型配置) · [命令参考](#-api-端点参考) · [架构](#-技术架构) · [免责声明](#️-免责声明)
+[快速开始](#-快速开始) · [安装](#-安装) · [核心能力](#-核心能力) · [AI 模型配置](#-ai-模型配置) · [命令参考](#-api-端点参考) · [诊断排障](#-诊断与排障) · [架构](#-技术架构) · [免责声明](#️-免责声明)
 
 </div>
 
@@ -259,6 +261,72 @@ Web 浏览器                  FastAPI 后端                    BOSS 直聘
 
 ---
 
+## 🔧 诊断与排障
+
+### 服务健康检查
+
+```bash
+curl http://127.0.0.1:8010/api/status
+curl http://127.0.0.1:8010/api/settings
+```
+
+### 常见问题
+
+<details>
+<summary>Q: 端口被占用？</summary>
+
+```bash
+# Windows: 查看占用进程
+netstat -ano | findstr :8010
+# 杀掉进程 或 换端口
+python boss_app.py --port 8015
+```
+</details>
+
+<details>
+<summary>Q: 启动浏览器失败？</summary>
+
+```bash
+playwright install firefox --force
+rm -rf .boss_profile/firefox_user_data
+```
+</details>
+
+<details>
+<summary>Q: 登录态过期？</summary>
+
+点击设置页「重新扫码登录」，用 BOSS 直聘 App 扫码。
+</details>
+
+<details>
+<summary>Q: AI 回复不工作？</summary>
+
+1. 确认设置页 AI 模型配置已保存
+2. 确认 API Key 有效
+3. 查看终端日志 `[监控] AI 自动回复就绪`
+</details>
+
+### 错误码参考
+
+| HTTP 状态码 | 含义 | 处理方式 |
+|------------|------|----------|
+| `200` | 操作成功 | — |
+| `400` | 参数错误 | 检查请求参数 |
+| `404` | 资源不存在 | 确认岗位/会话 ID 正确 |
+| `429` | 已达今日上限 | 等待次日重置，或在设置中调高上限 |
+| `500` | 搜索失败 | 检查浏览器是否正常、是否已登录 |
+| `503` | 浏览器未启动 | 到设置页点击「启动浏览器」 |
+
+| WebSocket 消息 | 含义 |
+|---------------|------|
+| `search_complete` | 搜索完成 |
+| `apply_complete` | 投递完成 |
+| `batch_complete` | 批量投递完成 |
+| `new_messages` | 收到新消息 |
+| `auto_reply_sent` | AI 自动回复已发送 |
+
+---
+
 ## ⚙️ 配置
 
 ### config.yaml
@@ -289,6 +357,22 @@ login:
 | AI 模型 | 模型名称 | 下拉选择 |
 
 ---
+
+## ⚠️ 合规边界
+
+本项目设计为个人求职辅助工具，请遵守以下边界：
+
+- ✅ 仅用于**个人账号**的岗位搜索与投递
+- ✅ 每日投递设有**上限**（默认15条，可在设置中调整）
+- ✅ AI 回复内容**可由用户自定义风格和素材**
+- ❌ 不得用于批量注册、商业采集、简历轰炸等违规行为
+- ❌ 不得规避 BOSS 直聘风控机制
+- ❌ 不得滥用 API 对平台造成负担
+
+投递频率已内置随机延迟（可在设置中配置回复间隔），避免触发平台限流。如账号出现风控提示，请立即停止自动化并回到平台官网手动操作。
+
+---
+
 
 ## ⚠️ 免责声明
 
