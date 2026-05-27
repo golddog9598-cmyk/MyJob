@@ -5,250 +5,140 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOSS直聘自动化控制台</title>
 <style>
-/* Hallmark · pre-emit critique: P5 H4 E5 S4 R5 V4
- * macrostructure: App Shell · genre: modern-minimal · theme: Quiet (austere)
- * audience: 求职者 · use: 投递+聊天 · tone: austere · motion: cut */
+:root{--accent:#1a1a2e;--green:#166534;--orange:#92400e;--red:#991b1b;--text:#0f0f0f;--text-2:#404040;--text-3:#737373;--surface:#fff;--border:#e5e5e5;--bg:#fafafa;--sidebar-bg:#f5f5f5;--hover:#f0f0f0;--font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--surface);color:var(--text);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
 
-:root {
-  --accent: #1a1a2e;
-  --green: #166534;
-  --orange: #92400e;
-  --red: #991b1b;
-  --text: #0f0f0f;
-  --text-2: #404040;
-  --text-3: #737373;
-  --surface: #ffffff;
-  --border: #e5e5e5;
-  --bg: #fafafa;
-  --sidebar-bg: #f5f5f5;
-  --hover: #f0f0f0;
-  --radius: 0;
-  --radius-sm: 0;
-  --font: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif;
-}
-*{margin:0;padding:0;box-sizing:border-box;}
-body{
-  font-family:var(--font);
-  background:var(--surface);
-  min-height:100vh;
-  color:var(--text);
-  font-size:13px;
-  line-height:1.5;
-  -webkit-font-smoothing:antialiased;
-  -moz-osx-font-smoothing:grayscale;
-  font-variant-numeric:tabular-nums;
-}
-.app{display:flex;height:100vh;overflow:hidden;}
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:200px;flex-shrink:0;background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 0}
+.sidebar-logo{padding:0 16px;margin-bottom:28px}
+.sidebar-logo h1{font-size:13px;font-weight:590;letter-spacing:-.01em}
+.sidebar-logo div{font-size:10px;color:var(--text-3);margin-top:2px}
+.sidebar-nav{flex:1;display:flex;flex-direction:column}
+.sidebar-nav a{display:flex;align-items:center;gap:8px;padding:6px 16px;color:var(--text-2);text-decoration:none;font-size:12px;font-weight:500;cursor:pointer;border-left:2px solid transparent;transition:background .1s}
+.sidebar-nav a:hover{background:var(--hover);color:var(--text)}
+.sidebar-nav a.active{color:var(--text);background:#e5e5e5;border-left-color:var(--accent);font-weight:590}
+.sidebar-nav a .icon{font-size:13px;width:20px;text-align:center;opacity:.6}
+.sidebar-status{padding:12px 16px;border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:6px}
+.sidebar-status .row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-3)}
+.dot{width:5px;height:5px;border-radius:50%}
+.dot.on{background:var(--green)}
+.dot.off{background:var(--border)}
 
-/* Sidebar — austere */
-.sidebar{
-  width:200px;flex-shrink:0;
-  background:var(--sidebar-bg);
-  border-right:1px solid var(--border);
-  display:flex;flex-direction:column;
-  padding:20px 0;
-}
-.sidebar-logo{padding:0 16px;margin-bottom:28px;}
-.sidebar-logo h1{font-size:13px;font-weight:590;color:var(--text);letter-spacing:-.01em;}
-.sidebar-logo div{font-size:10px;color:var(--text-3);margin-top:2px;font-weight:500;}
-.sidebar-nav{flex:1;display:flex;flex-direction:column;gap:0;}
-.sidebar-nav a{
-  display:flex;align-items:center;gap:8px;
-  padding:6px 16px;
-  color:var(--text-2);
-  text-decoration:none;font-size:12px;font-weight:500;
-  transition:background .1s;cursor:pointer;
-  border-left:2px solid transparent;
-}
-.sidebar-nav a:hover{background:#ebebeb;color:var(--text);}
-.sidebar-nav a.active{color:var(--text);background:#e5e5e5;border-left-color:var(--accent);font-weight:590;}
-.sidebar-nav a .icon{font-size:13px;width:20px;text-align:center;opacity:.6;}
-.sidebar-status{padding:12px 16px;border-top:1px solid var(--border);margin-top:auto;display:flex;flex-direction:column;gap:6px;}
-.sidebar-status .row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-3);}
-.sidebar-status .dot{width:5px;height:5px;border-radius:50%;}
-.sidebar-status .dot.on{background:var(--green);}
-.sidebar-status .dot.off{background:var(--border);}
+.main{flex:1;overflow-y:auto;padding:20px 28px;background:var(--surface)}
+.main-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.main-header h2{font-size:14px;font-weight:590;letter-spacing:-.01em}
 
-/* Main */
-.main{flex:1;overflow-y:auto;padding:20px 28px;background:var(--surface);}
-.main-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border);}
-.main-header h2{font-size:14px;font-weight:590;color:var(--text);letter-spacing:-.01em;}
+.tab{display:none}
+.tab.active{display:block}
 
-.tab{display:none;}
-.tab.active{display:block;}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.btn{padding:4px 12px;border-radius:4px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--border);transition:background .1s;font-family:var(--font);display:inline-flex;align-items:center;gap:4px;line-height:1.5}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-primary{background:var(--text);color:#fff;border-color:var(--text)}
+.btn-primary:hover:not(:disabled){background:#2a2a2a}
+.btn-primary:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+.btn-success{background:var(--green);color:#fff;border-color:var(--green)}
+.btn-success:hover:not(:disabled){background:#145326}
+.btn-success:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.btn-danger{background:var(--red);color:#fff;border-color:var(--red)}
+.btn-danger:hover:not(:disabled){background:#7f1d1d}
+.btn-danger:focus-visible{outline:2px solid var(--red);outline-offset:1px}
+.btn-secondary{background:var(--surface);color:var(--text-2);border:1px solid var(--border)}
+.btn-secondary:hover:not(:disabled){background:var(--hover)}
+.btn-secondary:focus-visible{outline:2px solid var(--border);outline-offset:1px}
+.btn-sm{padding:2px 8px;font-size:10px}
+.btn-xs{padding:1px 6px;font-size:10px;border-radius:3px}
 
-/* Buttons — austere, no decoration */
-.btn{
-  padding:4px 12px;border-radius:4px;font-size:11px;font-weight:500;cursor:pointer;
-  border:1px solid var(--border);transition:background .1s;font-family:var(--font);
-  display:inline-flex;align-items:center;gap:4px;line-height:1.5;
-}
-.btn:disabled{opacity:.35;cursor:not-allowed;}
-.btn-primary{background:var(--text);color:#fff;border-color:var(--text);}
-.btn-primary:hover:not(:disabled){background:#2a2a2a;}
-.btn-primary:focus-visible{outline:2px solid var(--text);outline-offset:1px;}
-.btn-success{background:var(--green);color:#fff;border-color:var(--green);}
-.btn-success:hover:not(:disabled){background:#145326;}
-.btn-success:focus-visible{outline:2px solid var(--green);outline-offset:1px;}
-.btn-danger{background:var(--red);color:#fff;border-color:var(--red);}
-.btn-danger:hover:not(:disabled){background:#7f1d1d;}
-.btn-danger:focus-visible{outline:2px solid var(--red);outline-offset:1px;}
-.btn-secondary{background:var(--surface);color:var(--text-2);border:1px solid var(--border);}
-.btn-secondary:hover:not(:disabled){background:var(--hover);}
-.btn-secondary:focus-visible{outline:2px solid var(--border);outline-offset:1px;}
-.btn-sm{padding:2px 8px;font-size:10px;}
-.btn-xs{padding:1px 6px;font-size:10px;border-radius:3px;}
+.section{border-bottom:1px solid var(--border);padding:0 0 16px 0;margin-bottom:16px}
+.section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.section h3{font-size:12px;font-weight:590;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em}
 
-/* Section */
-.section{border-bottom:1px solid var(--border);padding:0 0 16px 0;margin-bottom:16px;}
-.section:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
-.section h3{font-size:12px;font-weight:590;color:var(--text);margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em;}
+.search-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.search-bar input,.search-bar select{background:var(--surface);border:1px solid var(--border);padding:5px 8px;color:var(--text);font-size:12px;outline:none;font-family:var(--font);border-radius:3px;transition:border-color .1s}
+.search-bar input:focus,.search-bar select:focus{border-color:var(--text)}
+.search-bar input{flex:1;min-width:140px}
+.search-bar input::placeholder{color:var(--text-3)}
+.search-bar select{min-width:70px;cursor:pointer}
 
-/* Search bar */
-.search-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
-.search-bar input,.search-bar select{
-  background:var(--surface);border:1px solid var(--border);
-  padding:5px 8px;color:var(--text);font-size:12px;outline:none;
-  font-family:var(--font);transition:border-color .1s;border-radius:3px;
-}
-.search-bar input:focus,.search-bar select:focus{border-color:var(--text);}
-.search-bar input{flex:1;min-width:140px;}
-.search-bar input::placeholder{color:var(--text-3);}
-.search-bar select{min-width:70px;cursor:pointer;}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:0;border:1px solid var(--border);margin-bottom:16px}
+.stat-card{padding:12px 10px;text-align:center;border-right:1px solid var(--border)}
+.stat-card:last-child{border-right:none}
+.stat-card .num{font-size:22px;font-weight:590;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stat-card .lbl{font-size:10px;color:var(--text-3);margin-top:2px;text-transform:uppercase;letter-spacing:.04em}
 
-/* Stats */
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:0;margin-bottom:0;}
-.stat-card{padding:12px 10px;text-align:center;border-right:1px solid var(--border);border-bottom:1px solid var(--border);}
-.stat-card:last-child{border-right:none;}
-.stat-card .num{font-size:22px;font-weight:590;color:var(--text);letter-spacing:-.03em;font-variant-numeric:tabular-nums;}
-.stat-card .lbl{font-size:10px;color:var(--text-3);margin-top:2px;text-transform:uppercase;letter-spacing:.04em;}
+.jobs-grid{display:flex;flex-direction:column;border-top:1px solid var(--border)}
+.job-card{padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;transition:background .08s}
+.job-card:hover{background:var(--hover)}
+.job-card .title{font-size:12px;font-weight:590;min-width:160px;flex-shrink:0;letter-spacing:-.01em}
+.job-card .title a{color:var(--text);text-decoration:none}
+.job-card .title a:hover{text-decoration:underline}
+.job-card .meta{font-size:11px;color:var(--text-3);display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
+.job-card .salary{color:var(--red);font-weight:590;white-space:nowrap}
+.job-card .actions{display:flex;gap:4px;flex-shrink:0;margin-left:auto}
 
-/* Job cards — austere list */
-.jobs-grid{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--border);}
-.job-card{padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;transition:background .08s;}
-.job-card:hover{background:var(--hover);}
-.job-card .title{font-size:12px;font-weight:590;min-width:160px;flex-shrink:0;letter-spacing:-.01em;}
-.job-card .title a{color:var(--text);text-decoration:none;}
-.job-card .title a:hover{text-decoration:underline;}
-.job-card .meta{font-size:11px;color:var(--text-3);display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0;}
-.job-card .salary{color:var(--red);font-weight:590;white-space:nowrap;}
-.job-card .actions{display:flex;gap:4px;flex-shrink:0;margin-left:auto;}
+.badge{display:inline-block;padding:0 6px;border-radius:3px;font-size:10px;font-weight:510;border:1px solid var(--border)}
+.badge-pending{border-color:var(--border);color:var(--text-3)}
+.badge-applied{border-color:var(--text);color:var(--text)}
+.badge-replied{border-color:var(--green);color:var(--green)}
+.badge-skipped{border-color:var(--border);color:var(--text-3)}
+.badge-failed{border-color:var(--red);color:var(--red)}
+.badge-missing_url{border-color:var(--orange);color:var(--orange)}
 
-/* Badges */
-.badge{display:inline-block;padding:0 6px;border-radius:3px;font-size:10px;font-weight:510;border:1px solid var(--border);}
-.badge-pending{border-color:var(--border);color:var(--text-3);}
-.badge-applied{border-color:var(--text);color:var(--text);}
-.badge-replied{border-color:var(--green);color:var(--green);}
-.badge-skipped{border-color:var(--border);color:var(--text-3);}
-.badge-failed{border-color:var(--red);color:var(--red);}
-.badge-missing_url{border-color:var(--orange);color:var(--orange);}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)}
+th{color:var(--text-3);font-weight:500;font-size:10px;letter-spacing:.04em;text-transform:uppercase}
+td a{color:var(--text);text-decoration:none}
+td a:hover{text-decoration:underline}
 
-/* Table — austere data */
-table{width:100%;border-collapse:collapse;font-size:11px;}
-th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);}
-th{color:var(--text-3);font-weight:500;font-size:10px;letter-spacing:.04em;text-transform:uppercase;}
-td a{color:var(--text);text-decoration:none;}
-td a:hover{text-decoration:underline;}
+.chat-container{display:flex;height:68vh;border:1px solid var(--border);background:var(--surface)}
+.chat-list{width:240px;border-right:1px solid var(--border);overflow-y:auto;background:var(--sidebar-bg)}
+.chat-list-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .08s}
+.chat-list-item:hover{background:var(--surface)}
+.chat-list-item.active{background:var(--surface)}
+.chat-list-item .name{font-size:12px;font-weight:590}
+.chat-list-item .preview{font-size:11px;color:var(--text-3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-list-item .unread{font-size:10px;font-weight:590;color:var(--accent);margin-left:4px}
+.chat-pane{flex:1;display:flex;flex-direction:column}
+.chat-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.6}
+.msg-bubble{max-width:80%}
+.msg-hr{align-self:flex-start;color:var(--text)}
+.msg-me{align-self:flex-end;color:var(--text-2);padding-left:24px}
+.msg-me.ai{color:var(--text-2)}
+.msg-label{font-size:10px;color:var(--text-3);margin-bottom:0;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+.chat-input-area{padding:8px 12px;border-top:1px solid var(--border);display:flex;gap:6px}
+.chat-input-area textarea{flex:1;border:1px solid var(--border);padding:6px 10px;color:var(--text);font-size:12px;resize:none;outline:none;min-height:32px;max-height:80px;font-family:var(--font);border-radius:3px}
+.chat-input-area textarea:focus{border-color:var(--text)}
+.chat-header{padding:6px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.chat-header .info{font-size:11px}
+.chat-header .name{font-weight:590}
+.chat-header .company{font-size:10px;color:var(--text-3)}
 
-/* Chat — austere, no bubbles */
-.chat-container{display:flex;height:68vh;border:1px solid var(--border);background:var(--surface);}
-.chat-list{width:240px;border-right:1px solid var(--border);overflow-y:auto;background:var(--sidebar-bg);}
-.chat-list-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .08s;}
-.chat-list-item:hover{background:var(--surface);}
-.chat-list-item.active{background:var(--surface);}
-.chat-list-item .name{font-size:12px;font-weight:590;}
-.chat-list-item .preview{font-size:11px;color:var(--text-3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.chat-list-item .unread{font-size:10px;font-weight:590;color:var(--accent);margin-left:4px;}
-.chat-pane{flex:1;display:flex;flex-direction:column;}
-.chat-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.6;}
-.msg-bubble{max-width:80%;padding:0;}
-.msg-hr{align-self:flex-start;color:var(--text);}
-.msg-me{align-self:flex-end;color:var(--text-2);padding-left:24px;}
-.msg-me.ai{color:var(--text-2);}
-.msg-label{font-size:10px;color:var(--text-3);margin-bottom:0;font-weight:500;text-transform:uppercase;letter-spacing:.04em;}
-.chat-input-area{padding:8px 12px;border-top:1px solid var(--border);display:flex;gap:6px;}
-.chat-input-area textarea{flex:1;border:1px solid var(--border);padding:6px 10px;color:var(--text);font-size:12px;resize:none;outline:none;min-height:32px;max-height:80px;font-family:var(--font);border-radius:3px;}
-.chat-input-area textarea:focus{border-color:var(--text);}
-.chat-header{padding:6px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
-.chat-header .info{font-size:11px;}
-.chat-header .name{font-weight:590;}
-.chat-header .company{font-size:10px;color:var(--text-3);}
+.setting-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.setting-row label{width:110px;font-size:11px;color:var(--text-2);flex-shrink:0;font-weight:500}
+.setting-row input,.setting-row textarea,.setting-row select{flex:1;border:1px solid var(--border);padding:4px 8px;color:var(--text);font-size:12px;outline:none;font-family:var(--font);border-radius:3px;transition:border-color .1s}
+.setting-row textarea{min-height:48px;resize:vertical}
+.setting-row input:focus,.setting-row textarea:focus,.setting-row select:focus{border-color:var(--text)}
+.setting-row select{cursor:pointer}
 
-/* Settings — form-like */
-.setting-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
-.setting-row label{width:110px;font-size:11px;color:var(--text-2);flex-shrink:0;font-weight:500;}
-.setting-row input,.setting-row textarea,.setting-row select{
-  flex:1;border:1px solid var(--border);padding:4px 8px;color:var(--text);font-size:12px;outline:none;font-family:var(--font);transition:border-color .1s;border-radius:3px;
-}
-.setting-row textarea{min-height:48px;resize:vertical;}
-.setting-row input:focus,.setting-row textarea:focus,.setting-row select:focus{border-color:var(--text);}
-.setting-row select{cursor:pointer;}
+.pagination{display:flex;align-items:center;justify-content:center;gap:2px;margin-top:12px}
+.pagination button{padding:3px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:11px;cursor:pointer;border-radius:3px;transition:background .1s}
+.pagination button:hover:not(:disabled){background:var(--hover)}
+.pagination button:disabled{opacity:.25;cursor:not-allowed}
+.pagination span{font-size:11px;color:var(--text-3);padding:0 6px}
 
-/* Pagination */
-.pagination{display:flex;align-items:center;justify-content:center;gap:2px;margin-top:12px;}
-.pagination button{padding:3px 8px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:11px;cursor:pointer;transition:background .1s;border-radius:3px;}
-.pagination button:hover:not(:disabled){background:var(--hover);}
-.pagination button:disabled{opacity:.25;cursor:not-allowed;}
-.pagination span{font-size:11px;color:var(--text-3);padding:0 6px;}
-
-/* Misc */
-.empty{text-align:center;padding:32px;color:var(--text-3);font-size:12px;}
-.spinner{display:inline-block;width:12px;height:12px;border:1.5px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .55s linear infinite;}
+.empty{text-align:center;padding:32px;color:var(--text-3);font-size:12px}
+.spinner{display:inline-block;width:12px;height:12px;border:1.5px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .55s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-#searchStatus,#applyProgress{font-size:12px;line-height:1.6;color:var(--text-2);}
-.analyze-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center;}
-.analyze-modal-overlay .glass-card{background:var(--surface);}
-.hr-wechat-card{padding:10px 0;border-bottom:1px solid var(--border);}
+#searchStatus,#applyProgress{font-size:12px;line-height:1.6;color:var(--text-2)}
+.analyze-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center}
+.hr-wechat-card{padding:10px 0;border-bottom:1px solid var(--border)}
 
-@media(max-width:768px){
-  .sidebar{width:48px;}
-  .sidebar-logo h1,.sidebar-nav a span,.sidebar-status .row span:nth-child(2){display:none;}
-  .sidebar-nav a{justify-content:center;padding:6px 0;}
-  .main{padding:12px;}
-  .chat-container{flex-direction:column;height:auto;}
-  .chat-list{width:100%;max-height:140px;border-right:none;border-bottom:1px solid var(--border);}
-  .job-card{flex-direction:column;align-items:flex-start;}
-  .job-card .actions{margin-left:0;}
-}
-*{margin:0;padding:0;box-sizing:border-box;}
-body{
-  font-family:var(--font);
-  background:#f2f3f8;
-  min-height:100vh;
-  color:var(--text);
-  font-size:14px;
-  line-height:1.5;
-  -webkit-font-smoothing:antialiased;
-  -moz-osx-font-smoothing:grayscale;
-}
-.app{display:flex;height:100vh;overflow:hidden;}
-/* Sidebar */
-.sidebar{
-  width:220px;flex-shrink:0;
-  background:rgba(255,255,255,.55);
-  backdrop-filter:blur(30px) saturate(180%);
-  -webkit-backdrop-filter:blur(30px) saturate(180%);
-  border-right:1px solid rgba(0,0,0,.06);
-  display:flex;flex-direction:column;
-  padding:24px 0;
-}
-.sidebar-logo{padding:0 20px;margin-bottom:32px;}
-.sidebar-logo h1{font-size:15px;font-weight:600;color:var(--text);letter-spacing:-.02em;}
-.sidebar-logo div{font-size:11px;color:var(--text-3);margin-top:2px;font-weight:500;}
-.sidebar-nav{flex:1;display:flex;flex-direction:column;gap:2px;padding:0 8px;}
-.sidebar-nav a{
-  display:flex;align-items:center;gap:10px;
-  padding:10px 14px;border-radius:10px;
-  color:var(--text-2);
-  text-decoration:none;font-size:13px;font-weight:500;
-  transition:all .2s;cursor:pointer;
-}
+@media(max-width:768px){.sidebar{width:48px}.sidebar-logo h1,.sidebar-nav a span,.sidebar-status .row span:nth-child(2){display:none}.sidebar-nav a{justify-content:center;padding:6px 0}.main{padding:12px}.chat-container{flex-direction:column;height:auto}.chat-list{width:100%;max-height:140px;border-right:none;border-bottom:1px solid var(--border)}.job-card{flex-direction:column;align-items:flex-start}.job-card .actions{margin-left:0}}
 </style>
 </head>
 <body>
+
 <div class="app">
-  <!-- Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-logo">
       <h1>BOSS 控制台</h1>
@@ -267,8 +157,7 @@ body{
     </div>
   </aside>
 
-  <!-- Main -->
-  <main class="main" id="mainContent">
+  <main class="main">
     <div class="main-header">
       <h2 id="pageTitle">岗位搜索</h2>
       <div style="display:flex;gap:6px;">
@@ -280,16 +169,21 @@ body{
     <!-- Tab 1: Search -->
     <div class="tab active" id="tab-search">
       <div class="search-bar">
-          <input type="text" id="searchKeyword" placeholder="关键词" value="AI Agent">
-          <select id="searchCity"><optgroup label="山东省"><option value="济南">济南</option><option value="青岛">青岛</option><option value="淄博" selected>淄博</option><option value="潍坊">潍坊</option><option value="烟台">烟台</option><option value="济宁">济宁</option><option value="临沂">临沂</option><option value="泰安">泰安</option><option value="威海">威海</option><option value="东营">东营</option><option value="滨州">滨州</option><option value="菏泽">菏泽</option><option value="枣庄">枣庄</option><option value="日照">日照</option><option value="聊城">聊城</option><option value="德州">德州</option></optgroup><optgroup label="一线城市"><option value="北京">北京</option><option value="上海">上海</option><option value="广州">广州</option><option value="深圳">深圳</option></optgroup><optgroup label="新一线城市"><option value="成都">成都</option><option value="杭州">杭州</option><option value="武汉">武汉</option><option value="南京">南京</option><option value="重庆">重庆</option><option value="西安">西安</option><option value="长沙">长沙</option><option value="天津">天津</option><option value="苏州">苏州</option><option value="郑州">郑州</option><option value="东莞">东莞</option><option value="沈阳">沈阳</option><option value="宁波">宁波</option><option value="昆明">昆明</option></optgroup><optgroup label="其他省会"><option value="合肥">合肥</option><option value="福州">福州</option><option value="厦门">厦门</option><option value="南昌">南昌</option><option value="贵阳">贵阳</option><option value="南宁">南宁</option><option value="太原">太原</option><option value="石家庄">石家庄</option><option value="哈尔滨">哈尔滨</option><option value="长春">长春</option><option value="兰州">兰州</option><option value="乌鲁木齐">乌鲁木齐</option><option value="呼和浩特">呼和浩特</option><option value="拉萨">拉萨</option><option value="西宁">西宁</option><option value="银川">银川</option><option value="海口">海口</option><option value="三亚">三亚</option></optgroup><option value="全国">全国</option></select>
-          <button class="btn btn-primary" id="btnSearch" onclick="doSearch()">搜索</button>
-          <input type="text" id="searchWelfare" placeholder="福利:双休,五险一金" style="max-width:160px;">
-          <button class="btn btn-success" onclick="batchSearch()">一键搜索</button>
-          <button class="btn btn-primary" onclick="batchApplyAll()">一键投递</button>
-        </div>
-        <div id="searchStatus"></div>
-        <div id="funnelBar" style="display:none;margin-top:8px;"></div>
+        <input type="text" id="searchKeyword" placeholder="关键词" value="AI Agent">
+        <select id="searchCity">
+          <optgroup label="山东省"><option value="济南">济南</option><option value="青岛">青岛</option><option value="淄博" selected>淄博</option><option value="潍坊">潍坊</option><option value="烟台">烟台</option><option value="济宁">济宁</option><option value="临沂">临沂</option><option value="泰安">泰安</option><option value="威海">威海</option><option value="东营">东营</option><option value="滨州">滨州</option><option value="菏泽">菏泽</option><option value="枣庄">枣庄</option><option value="日照">日照</option><option value="聊城">聊城</option><option value="德州">德州</option></optgroup>
+          <optgroup label="一线城市"><option value="北京">北京</option><option value="上海">上海</option><option value="广州">广州</option><option value="深圳">深圳</option></optgroup>
+          <optgroup label="新一线"><option value="成都">成都</option><option value="杭州">杭州</option><option value="武汉">武汉</option><option value="南京">南京</option><option value="重庆">重庆</option><option value="西安">西安</option><option value="长沙">长沙</option><option value="天津">天津</option><option value="苏州">苏州</option><option value="郑州">郑州</option><option value="东莞">东莞</option><option value="沈阳">沈阳</option><option value="宁波">宁波</option><option value="昆明">昆明</option></optgroup>
+          <optgroup label="其他省会"><option value="合肥">合肥</option><option value="福州">福州</option><option value="厦门">厦门</option><option value="南昌">南昌</option><option value="贵阳">贵阳</option><option value="南宁">南宁</option><option value="太原">太原</option><option value="石家庄">石家庄</option><option value="哈尔滨">哈尔滨</option><option value="长春">长春</option><option value="兰州">兰州</option><option value="乌鲁木齐">乌鲁木齐</option><option value="呼和浩特">呼和浩特</option><option value="拉萨">拉萨</option><option value="西宁">西宁</option><option value="银川">银川</option><option value="海口">海口</option><option value="三亚">三亚</option></optgroup>
+          <option value="全国">全国</option>
+        </select>
+        <button class="btn btn-primary" id="btnSearch" onclick="doSearch()">搜索</button>
+        <input type="text" id="searchWelfare" placeholder="福利:双休,五险一金" style="max-width:160px;">
+        <button class="btn btn-success" onclick="batchSearch()">一键搜索</button>
+        <button class="btn btn-primary" onclick="batchApplyAll()">一键投递</button>
       </div>
+      <div id="searchStatus"></div>
+      <div id="funnelBar" style="display:none;margin-top:8px;"></div>
       <div class="jobs-grid" id="jobsGrid"><div class="empty">点击搜索获取岗位</div></div>
     </div>
 
@@ -327,14 +221,17 @@ body{
       <div class="chat-container">
         <div class="chat-list" id="conversationList"><div class="empty" style="padding:20px;">暂无会话</div></div>
         <div class="chat-pane">
-          <div class="chat-header" id="chatHeader"><div class="info"><span class="name">选择会话</span><br><span class="company">点击左侧会话开始查看</span></div><div style="display:flex;gap:6px;"><button class="btn btn-sm btn-secondary" id="btnAutoReplyToggle" onclick="toggleAutoReply()" disabled>暂停AI</button><button class="btn btn-sm btn-primary" id="btnManualSend" onclick="sendManualMessage()" disabled>手动发送</button></div></div>
+          <div class="chat-header" id="chatHeader">
+            <div class="info"><span class="name">选择会话</span><br><span class="company">点击左侧会话开始查看</span></div>
+            <div style="display:flex;gap:6px;"><button class="btn btn-sm btn-secondary" id="btnAutoReplyToggle" onclick="toggleAutoReply()" disabled>暂停AI</button><button class="btn btn-sm btn-primary" id="btnManualSend" onclick="sendManualMessage()" disabled>手动发送</button></div>
+          </div>
           <div class="chat-messages" id="chatMessages"><div class="empty">选择一个会话查看消息</div></div>
           <div class="chat-input-area"><textarea id="chatInput" placeholder="输入消息..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendManualMessage();}"></textarea></div>
         </div>
       </div>
     </div>
 
-    <!-- Tab 4: 微信记录 -->
+    <!-- Tab 4: Wechat -->
     <div class="tab" id="tab-wechat">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <h3 style="margin:0;">已获取的 HR 微信</h3>
@@ -381,10 +278,8 @@ body{
 </div>
 
 <script>
-// ── State ──
 let activeTab='search',activeConvId=null,ws=null,conversations=[],currentSearchJobs=[],searchInFlight=false;
 
-// ── Sidebar nav ──
 function switchTab(tab){
   activeTab=tab;
   document.querySelectorAll('#sideNav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===tab));
@@ -396,14 +291,12 @@ function switchTab(tab){
 }
 document.querySelectorAll('#sideNav a').forEach(a=>a.addEventListener('click',()=>switchTab(a.dataset.tab)));
 
-// ── Init ──
 document.addEventListener('click',e=>{
   let b=e.target.closest('[data-action="apply"]');if(b){applyOne(b.dataset.url,b);return;}
   b=e.target.closest('[data-action="skip"]');if(b)skipJob(b.dataset.id);
 });
 connectWS();loadSettings();refreshStatus();
 
-// ── WebSocket ──
 function connectWS(){
   ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws');
   ws.onmessage=e=>{try{handleWS(JSON.parse(e.data))}catch(ex){}};
@@ -413,12 +306,9 @@ function connectWS(){
 function handleWS(msg){
   switch(msg.type){
     case'connected':updateStatusUI(msg.status);break;
-    case'search_complete':
-      document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">搜索完成，找到 '+msg.found+' 条</div>';
-      if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;
+    case'search_complete':document.getElementById('searchStatus').innerHTML='<div style="color:var(--green);margin-top:8px;">搜索完成，找到 '+msg.found+' 条</div>';if(!searchInFlight&&currentSearchJobs.length===0)loadJobs();break;
     case'apply_complete':
-      if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}
-      else loadJobs();
+      if(currentSearchJobs.length&&msg.job_url){currentSearchJobs=currentSearchJobs.map(j=>j.job_url===msg.job_url?{...j,status:'applied',id:msg.job_id||j.id}:j);renderJobs(currentSearchJobs);}else loadJobs();
       refreshStatus();if(activeTab==='applications')loadApplications();document.getElementById('searchStatus').innerHTML='';break;
     case'batch_complete':loadJobs();refreshStatus();if(activeTab==='applications')loadApplications();break;
     case'new_messages':case'auto_reply_sent':case'manual_message_sent':
@@ -430,7 +320,6 @@ function handleWS(msg){
   }
 }
 
-// ── Status ──
 function refreshStatus(){
   fetch('/api/status').then(r=>r.json()).then(s=>{
     updateStatusUI(s);
@@ -443,14 +332,8 @@ function refreshStatus(){
 function renderFunnel(d){
   if(!d||d.today_applications===undefined)return;
   const el=document.getElementById('funnelBar');if(!el)return;
-  el.style.display='grid';
-  el.style.gridTemplateColumns='repeat(4,1fr)';
-  el.style.gap='0';
-  el.style.border='1px solid var(--border)';
-  el.innerHTML='<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.pending||0)+'</div><div style="font-size:10px;color:var(--text-3);">待投递</div></div>'+
-    '<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.today_applications||0)+'</div><div style="font-size:10px;color:var(--text-3);">已投递</div></div>'+
-    '<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.replied||0)+'</div><div style="font-size:10px;color:var(--text-3);">HR回复</div></div>'+
-    '<div style="padding:8px;text-align:center;"><div style="font-size:18px;font-weight:590;">'+(d.interview||0)+'</div><div style="font-size:10px;color:var(--text-3);">面试</div></div>';
+  el.style.display='grid';el.style.gridTemplateColumns='repeat(4,1fr)';el.style.gap='0';el.style.border='1px solid var(--border)';
+  el.innerHTML='<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.pending||0)+'</div><div style="font-size:10px;color:var(--text-3);">待投递</div></div>'+'<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.today_applications||0)+'</div><div style="font-size:10px;color:var(--text-3);">已投递</div></div>'+'<div style="padding:8px;text-align:center;border-right:1px solid var(--border);"><div style="font-size:18px;font-weight:590;">'+(d.replied||0)+'</div><div style="font-size:10px;color:var(--text-3);">HR回复</div></div>'+'<div style="padding:8px;text-align:center;"><div style="font-size:18px;font-weight:590;">'+(d.interview||0)+'</div><div style="font-size:10px;color:var(--text-3);">面试</div></div>';
 }
 function updateStatusUI(s){
   ['browserDot','monitorDot'].forEach(id=>{let d=document.getElementById(id);d.className='dot '+(s[id==='browserDot'?'browser_running':'monitor_running']?'on':'off');});
@@ -458,13 +341,11 @@ function updateStatusUI(s){
   document.getElementById('monitorStatus').textContent=s.monitor_running?(s.monitor_paused?'已暂停':'运行中'):'未启动';
 }
 
-// ── System ──
 function startSystem(){document.getElementById('btnStart').disabled=true;fetch('/api/system/start',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.status==='started')refreshStatus();else{alert('启动失败: '+(d.message||'未知'));document.getElementById('btnStart').disabled=false;}}).catch(()=>{document.getElementById('btnStart').disabled=false;});}
 function stopSystem(){fetch('/api/system/stop',{method:'POST'}).then(()=>refreshStatus());}
 function doRelogin(){if(!confirm('浏览器将打开BOSS登录页，确定继续？'))return;let b=document.getElementById('btnRelogin');b.disabled=true;b.textContent='等待扫码...';document.getElementById('sessionStatus').textContent='请扫码登录';fetch('/api/system/relogin',{method:'POST'}).then(r=>r.json()).then(d=>{b.disabled=false;b.textContent='重新扫码登录';document.getElementById('sessionStatus').textContent=d.status==='ok'?'登录态正常':(d.message||'失败');}).catch(()=>{b.disabled=false;b.textContent='重新扫码登录';});}
 function manualHeartbeat(){document.getElementById('sessionStatus').textContent='检测中...';fetch('/api/system/heartbeat',{method:'POST'}).then(r=>r.json()).then(d=>{document.getElementById('sessionStatus').textContent=d.alive?'登录态正常':'已过期';}).catch(()=>{document.getElementById('sessionStatus').textContent='检测失败';});}
 
-// ── Search ──
 function doSearch(){
   searchInFlight=true;
   document.getElementById('searchStatus').innerHTML='<div class="spinner"></div> 搜索中...';
@@ -508,7 +389,6 @@ function applyOne(url,btn){
 }
 function skipJob(id){fetch('/api/jobs/'+id+'/skip',{method:'POST'}).then(()=>{if(currentSearchJobs.length){currentSearchJobs=currentSearchJobs.map(j=>String(j.id)===String(id)?{...j,status:'skipped'}:j);renderJobs(currentSearchJobs);}else loadJobs();if(activeTab==='applications')loadApplications();});}
 
-// ── AI 分析 ──
 function analyzeJob(url,title,company,desc){
   let m=document.createElement('div');m.className='analyze-modal-overlay';
   m.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);padding:20px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;font-size:13px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><h3 style="margin:0;">AI 岗位分析</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;">&times;</button></div><div id="analyzeResult"><div class="spinner"></div> 分析中...</div><div style="font-size:10px;color:var(--text-3);margin-top:8px;">'+esc(title)+' @ '+esc(company)+'</div></div>';
@@ -520,14 +400,12 @@ function analyzeJob(url,title,company,desc){
   }).catch(e=>{document.getElementById('analyzeResult').innerHTML='<div style="color:var(--red);">失败: '+e.message+'</div>';});
 }
 
-// ── 收藏 ──
 function toggleShortlist(url,title,company,salary,city,btn){
   fetch('/api/shortlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,title,company,salary,city})}).then(r=>r.json()).then(d=>{
     if(d.status==='already_exists'||d.status==='duplicate'){btn.textContent='已收藏';btn.style.opacity='.5';}else{btn.textContent='已收藏';btn.style.opacity='1';}
   });
 }
 
-// ── Applications ──
 let appCurrentPage=1,appCurrentStatus='',appAllJobs=[],APP_PAGE_SIZE=15;
 function loadApplications(status){appCurrentStatus=status||'';appCurrentPage=1;fetch('/api/jobs?limit=500'+(status?'&status='+status:'')).then(r=>r.json()).then(d=>{appAllJobs=d.jobs||[];renderAppPage();});}
 function renderAppPage(){
@@ -540,7 +418,6 @@ function renderAppPage(){
   document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=totalPages;renderAppPage()">»</button>';
 }
 
-// ── Shortlist ──
 function loadShortlists(){
   fetch('/api/shortlists').then(r=>r.json()).then(d=>{
     let tbody=document.getElementById('appTableBody'),sl=d.shortlists||[];
@@ -550,7 +427,6 @@ function loadShortlists(){
 }
 function removeShortlist(id,btn){fetch('/api/shortlists/'+id,{method:'DELETE'}).then(()=>loadShortlists());}
 
-// ── Chat ──
 function loadConversations(){
   return fetch('/api/conversations').then(r=>r.json()).then(d=>{
     conversations=d.conversations||[];let list=document.getElementById('conversationList');
@@ -592,21 +468,19 @@ function toggleAutoReply(){
 }
 function navigateBrowserToChat(){fetch('/api/system/navigate-chat',{method:'POST'}).catch(()=>{});}
 
-// ── Wechat ──
 function loadWechatExchanges(){
   fetch('/api/wechat-exchanges').then(r=>r.json()).then(d=>{
     let el=document.getElementById('wechatExchangesList'),ex=d.exchanges||[];
     if(!ex.length){el.innerHTML='<div class="empty">暂无微信记录</div>';return;}
     el.innerHTML=ex.map(e=>{
       let t=new Date(e.wechat_shared_at).toLocaleString('zh-CN'),w=e.hr_wechat||'';
-      let desc=e.job_description?'<div style="font-size:12px;color:var(--text-2);margin-bottom:8px;line-height:1.5;background:var(--input-bg);padding:10px;border-radius:6px;">'+esc(e.job_description)+'</div>':'';
+      let desc=e.job_description?'<div style="font-size:12px;color:var(--text-2);margin-bottom:8px;line-height:1.5;background:var(--sidebar-bg);padding:10px;border:1px solid var(--border);">'+esc(e.job_description)+'</div>':'';
       return'<div class="hr-wechat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div><div style="font-weight:590;font-size:13px;">'+esc(e.hr_name)+'</div>'+desc+'<div style="display:flex;align-items:center;gap:8px;"><code style="background:var(--sidebar-bg);padding:4px 10px;border:1px solid var(--border);font-size:14px;color:var(--text);display:inline-block;">'+w+'</code><button class="btn btn-xs btn-primary" onclick="copyWechat(\''+w.replace(/'/g,"\\'")+'\',this)">复制</button></div></div><div style="font-size:10px;color:var(--text-3);text-align:right;">'+esc(e.hr_company||'')+'<br>'+t+'</div></div></div>';
     }).join('');
   });
 }
 function copyWechat(text,btn){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500);});}
 
-// ── Batch Apply ──
 function batchApplyAll(){
   let pending=currentSearchJobs.filter(j=>j.job_url&&j.status!=='applied'&&j.status!=='replied');
   if(!pending.length){alert('没有待投递的岗位，请先搜索');return;}
@@ -633,17 +507,13 @@ function batchSearch(){
   let txt=document.getElementById('setSearchKeywords');if(txt&&txt.value){cs=txt.value.split('\n').filter(s=>s.trim());}
   if(cs.length===0){doSearch();return;}
   if(!confirm('确定搜索 '+cs.length+' 个关键词？'))return;
-  (async()=>{
-    for(let k of cs){document.getElementById('searchKeyword').value=k;await new Promise(r=>{doSearch();let t=setInterval(()=>{if(!searchInFlight){clearInterval(t);setTimeout(r,200);}},300);});}
-  })();
+  (async()=>{for(let k of cs){document.getElementById('searchKeyword').value=k;await new Promise(r=>{doSearch();let t=setInterval(()=>{if(!searchInFlight){clearInterval(t);setTimeout(r,200);}},300);});}})();
 }
 
-// ── Helpers ──
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'):'';}
 function attr(s){return s?s.replace(/'/g,"&#39;"):'';}
 function setVal(id,v){let el=document.getElementById(id);if(el)el.value=v;}
 
-// ── Settings ──
 function loadSettings(){
   fetch('/api/settings').then(r=>r.json()).then(d=>{
     let s=d.settings||{};
@@ -663,19 +533,7 @@ function loadSettings(){
   });
 }
 function saveSettings(){
-  let data={
-    greeting_template:document.getElementById('setGreeting').value,
-    ai_reply_style:document.getElementById('setStyle').value,
-    daily_apply_limit:document.getElementById('setDailyLimit').value,
-    min_reply_delay_sec:document.getElementById('setMinDelay').value,
-    max_reply_delay_sec:document.getElementById('setMaxDelay').value,
-    resume_summary:document.getElementById('setResume').value,
-    wechat_id:document.getElementById('setWechat').value,
-    search_keywords:document.getElementById('setSearchKeywords').value.replace(/\n/g,','),
-    auto_reply_enabled:document.getElementById('setAutoReply').value,
-    ai_base_url:document.getElementById('setAIBaseUrl').value,
-    ai_model:document.getElementById('setAIModel').value,
-  };
+  let data={greeting_template:document.getElementById('setGreeting').value,ai_reply_style:document.getElementById('setStyle').value,daily_apply_limit:document.getElementById('setDailyLimit').value,min_reply_delay_sec:document.getElementById('setMinDelay').value,max_reply_delay_sec:document.getElementById('setMaxDelay').value,resume_summary:document.getElementById('setResume').value,wechat_id:document.getElementById('setWechat').value,search_keywords:document.getElementById('setSearchKeywords').value.replace(/\n/g,','),auto_reply_enabled:document.getElementById('setAutoReply').value,ai_base_url:document.getElementById('setAIBaseUrl').value,ai_model:document.getElementById('setAIModel').value};
   let key=document.getElementById('setAIApiKey').value;if(key)data.ai_api_key=key;
   fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(()=>{
     alert('设置已保存');
