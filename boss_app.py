@@ -746,7 +746,8 @@ async def analyze_jd(req: AnalyzeRequest):
     title = req.job_title or ""
     company = req.company or ""
 
-    prompt = f"""你是求职辅导专家。分析以下岗位JD，对比求职者简历，输出JSON。
+    if resume and len(resume.strip()) > 5:
+        prompt = f"""你是求职辅导专家。分析以下岗位JD，对比求职者简历，输出JSON。
 
 ## 求职者简历
 {resume}
@@ -764,6 +765,24 @@ async def analyze_jd(req: AnalyzeRequest):
   "advice": "建议强调Agent开发经验，问对方技术栈",
   "summary": "整体匹配度较高，注意补充部署相关经验"
 }}"""
+    else:
+        prompt = f"""你是求职辅导专家。分析以下岗位JD，提取关键信息，输出JSON。
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:2000]}
+
+## 输出格式（严格JSON）
+{{
+  "match_score": 70,
+  "key_skills": ["Python", "LangChain", "RAG"],
+  "gap": "",
+  "advice": "",
+  "summary": "该岗位的核心要求是..."
+}}
+
+注意：match_score 基于 JD 难度和市场需求预估即可，不必对比简历。summary 用一两句总结这个岗位的核心要求。"""
 
     try:
         sys.path.insert(0, str(Path(__file__).parent / "interview"))
