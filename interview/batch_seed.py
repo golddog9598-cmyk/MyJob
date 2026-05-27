@@ -3,15 +3,21 @@
 批量生成面试问答对 - 用DeepSeek API生成100+高频RAG/Agent/大模型问答对
 修复死锁问题 + 每条记录独立提交 + 跳过已存在
 """
+
 import json, os, re, sys, time
 import urllib.request
 
-# DeepSeek API
-with open(os.path.expanduser('~/.hermes/.env')) as f:
-    content = f.read()
-m = re.search(r'DEEPSEEK_API_KEY=(\S+)', content)
-API_KEY = m.group(1) if m else ''
-API_URL = 'https://api.deepseek.com/v1/chat/completions'
+# AI API（从SQLite设置读取）
+import sys, os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from boss_state import get_setting, init_db
+
+init_db()
+API_KEY = get_setting("ai_api_key") or ""
+BASE_URL = get_setting("ai_base_url") or "https://api.deepseek.com"
+API_URL = f"{BASE_URL}/chat/completions"
+MODEL = get_setting("ai_model") or "deepseek-chat"
 
 import pymysql
 
@@ -34,7 +40,7 @@ def question_exists(question):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute('SELECT id FROM interview_qa_pairs WHERE question = %s', (question,))
+            cur.execute("SELECT id FROM interview_qa_pairs WHERE question = %s", (question,))
             return cur.fetchone() is not None
     finally:
         conn.close()
@@ -46,14 +52,14 @@ def insert_qa(topic, question, answer):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                'INSERT INTO interview_qa_pairs (category, question, answer, difficulty, related_skills) VALUES (%s, %s, %s, %s, %s)',
-                (topic, question, answer, 'medium', topic)
+                "INSERT INTO interview_qa_pairs (category, question, answer, difficulty, related_skills) VALUES (%s, %s, %s, %s, %s)",
+                (topic, question, answer, "medium", topic),
             )
             conn.commit()
         return True
     except Exception as e:
         conn.rollback()
-        print(f'\n  ❌ 插入失败: {e}')
+        print(f"\n  ❌ 插入失败: {e}")
         return False
     finally:
         conn.close()
@@ -177,19 +183,20 @@ TOPICS = {
 
 def call_deepseek(messages, max_tokens=400, temperature=0.3):
     """调用DeepSeek API，带重试"""
-    payload = json.dumps({
-        'model': 'deepseek-chat',
-        'messages': messages,
-        'max_tokens': max_tokens,
-        'temperature': temperature,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": MODEL,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+    ).encode()
     req = urllib.request.Request(
-        API_URL, data=payload,
-        headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {API_KEY}'}
+        API_URL, data=payload, headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"}
     )
     resp = urllib.request.urlopen(req, timeout=60)
     data = json.loads(resp.read().decode())
-    return data['choices'][0]['message']['content']
+    return data["choices"][0]["message"]["content"]
 
 
 def generate_answer(topic, question):
@@ -207,14 +214,14 @@ def generate_answer(topic, question):
 
     for attempt in range(2):
         try:
-            answer = call_deepseek([{'role': 'user', 'content': prompt}], max_tokens=500)
+            answer = call_deepseek([{"role": "user", "content": prompt}], max_tokens=500)
             # 去掉"答案："前缀
-            answer = answer.replace('答案：', '').replace('答案:', '').strip()
+            answer = answer.replace("答案：", "").replace("答案:", "").strip()
             return answer
         except Exception as e:
-            print(f'\n  ⚠️ 重试({attempt+1}/2): {e}')
+            print(f"\n  ⚠️ 重试({attempt + 1}/2): {e}")
             time.sleep(3)
-    return ''
+    return ""
 
 
 def seed_all():
@@ -225,7 +232,7 @@ def seed_all():
     added = 0
     errors = 0
 
-    print(f'🚀 准备生成 {total} 条面试问答对...\n')
+    print(f"🚀 准备生成 {total} 条面试问答对...\n")
 
     for topic, questions in TOPICS.items():
         count = 0
@@ -233,30 +240,30 @@ def seed_all():
             done += 1
 
             if question_exists(q):
-                print(f'  ⏭️ [{done}/{total}] [{topic}] 已存在')
+                print(f"  ⏭️ [{done}/{total}] [{topic}] 已存在")
                 skipped += 1
                 continue
 
-            print(f'  🔄 [{done}/{total}] [{topic}] 生成中...', end='', flush=True)
+            print(f"  🔄 [{done}/{total}] [{topic}] 生成中...", end="", flush=True)
             answer = generate_answer(topic, q)
 
             if answer and len(answer) > 20:
                 if insert_qa(topic, q, answer):
                     count += 1
                     added += 1
-                    print(f' ✅ ({len(answer)}字)')
+                    print(f" ✅ ({len(answer)}字)")
                 else:
                     errors += 1
-                    print(f' ❌ 入库失败')
+                    print(f" ❌ 入库失败")
             else:
                 errors += 1
-                print(f' ❌ 生成内容为空')
+                print(f" ❌ 生成内容为空")
 
             time.sleep(0.3)  # API限速
 
-        print(f'\n📊 [{topic}] 新增 {count} 条\n')
+        print(f"\n📊 [{topic}] 新增 {count} 条\n")
 
-    print(f'🎉 完成！总计 {total} 条 | 新增 {added} | 跳过 {skipped} | 失败 {errors}')
+    print(f"🎉 完成！总计 {total} 条 | 新增 {added} | 跳过 {skipped} | 失败 {errors}")
 
 
 def refresh_embeddings():
@@ -280,19 +287,19 @@ def refresh_embeddings():
             conn = get_conn()
             try:
                 with conn.cursor() as cur:
-                    cur.execute('UPDATE interview_qa_pairs SET embedding = %s WHERE id = %s', (emb_json, qid))
+                    cur.execute("UPDATE interview_qa_pairs SET embedding = %s WHERE id = %s", (emb_json, qid))
                     conn.commit()
                 count += 1
             finally:
                 conn.close()
         except Exception as e:
-            print(f'embedding错误 id={qid}: {e}')
+            print(f"embedding错误 id={qid}: {e}")
 
-    print(f'\n刷新了 {count} 条embedding')
+    print(f"\n刷新了 {count} 条embedding")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     seed_all()
-    print('\n刷新embedding...')
+    print("\n刷新embedding...")
     refresh_embeddings()
-    print('全部完成！')
+    print("全部完成！")

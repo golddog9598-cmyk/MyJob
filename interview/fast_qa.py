@@ -27,18 +27,21 @@ DB_CONFIG = {
 
 SEMANTIC_MATCH_THRESHOLD = 0.65
 
+
 # ===== 缓存 =====
 class LRUCache:
     def __init__(self, capacity=200):
         self.cache = {}
         self.capacity = capacity
         self.order = []
+
     def get(self, key):
         if key in self.cache:
             self.order.remove(key)
             self.order.append(key)
             return self.cache[key]
         return None
+
     def set(self, key, value):
         if key in self.cache:
             self.order.remove(key)
@@ -47,9 +50,11 @@ class LRUCache:
             del self.cache[oldest]
         self.cache[key] = value
         self.order.append(key)
+
     def clear(self):
         self.cache.clear()
         self.order.clear()
+
 
 query_cache = LRUCache(capacity=200)
 
@@ -68,34 +73,111 @@ TOPIC_DESCRIPTIONS = {
 # 关键词辅助（embedding兜底，高置信度关键词覆盖embedding结果）
 TOPIC_KEYWORDS = {
     "Prompt Engineering": {
-        "keywords": ["提示词", "prompt", "思维链", "cot", "few-shot", "zero-shot",
-                     "结构化输出", "指令设计", "角色设定", "负向提示", "分步指令",
-                     "提示", "prompt engineering"],
+        "keywords": [
+            "提示词",
+            "prompt",
+            "思维链",
+            "cot",
+            "few-shot",
+            "zero-shot",
+            "结构化输出",
+            "指令设计",
+            "角色设定",
+            "负向提示",
+            "分步指令",
+            "提示",
+            "prompt engineering",
+        ],
         "high_confidence": ["提示词", "prompt engineering", "提示"],
     },
     "RAG": {
-        "keywords": ["rag", "检索增强", "chunk", "分块", "向量检索", "向量数据库",
-                     "rerank", "重排序", "bm25", "混合检索", "知识图谱", "graph rag",
-                     "graphrag", "cr ag", "self-rag", "检索质量", "文档更新", "多模态",
-                     "召回", "query改写", "query理解", "缓存机制", "metadata",
-                     "长文档", "智能客服"],
+        "keywords": [
+            "rag",
+            "检索增强",
+            "chunk",
+            "分块",
+            "向量检索",
+            "向量数据库",
+            "rerank",
+            "重排序",
+            "bm25",
+            "混合检索",
+            "知识图谱",
+            "graph rag",
+            "graphrag",
+            "cr ag",
+            "self-rag",
+            "检索质量",
+            "文档更新",
+            "多模态",
+            "召回",
+            "query改写",
+            "query理解",
+            "缓存机制",
+            "metadata",
+            "长文档",
+            "智能客服",
+        ],
         "high_confidence": ["rag", "检索增强", "知识图谱", "graph rag"],
     },
     "Agent": {
-        "keywords": ["agent", "智能体", "react", "multi-agent", "多智能体",
-                     "function calling", "tool use", "memory", "记忆", "planning",
-                     "langgraph", "autogen", "crewai", "mcp", "agentic"],
+        "keywords": [
+            "agent",
+            "智能体",
+            "react",
+            "multi-agent",
+            "多智能体",
+            "function calling",
+            "tool use",
+            "memory",
+            "记忆",
+            "planning",
+            "langgraph",
+            "autogen",
+            "crewai",
+            "mcp",
+            "agentic",
+        ],
         "high_confidence": ["agent", "智能体", "multi-agent"],
     },
     "大模型": {
-        "keywords": ["transformer", "attention", "注意力", "llm", "大模型", "大语言模型",
-                     "微调", "sft", "lora", "量化", "gptq", "gguf", "推理加速",
-                     "kv cache", "moe", "幻觉", "temperature", "预训练"],
+        "keywords": [
+            "transformer",
+            "attention",
+            "注意力",
+            "llm",
+            "大模型",
+            "大语言模型",
+            "微调",
+            "sft",
+            "lora",
+            "量化",
+            "gptq",
+            "gguf",
+            "推理加速",
+            "kv cache",
+            "moe",
+            "幻觉",
+            "temperature",
+            "预训练",
+        ],
         "high_confidence": ["llm", "大模型", "大语言模型", "transformer"],
     },
     "工程化": {
-        "keywords": ["fastapi", "docker", "部署", "sse", "流式输出", "websocket",
-                     "负载均衡", "ci/cd", "限流", "提示注入", "容器编排", "gpu"],
+        "keywords": [
+            "fastapi",
+            "docker",
+            "部署",
+            "sse",
+            "流式输出",
+            "websocket",
+            "负载均衡",
+            "ci/cd",
+            "限流",
+            "提示注入",
+            "容器编排",
+            "gpu",
+        ],
         "high_confidence": ["docker", "部署", "fastapi"],
     },
     "Python": {
@@ -108,7 +190,7 @@ TOPIC_KEYWORDS = {
 def classify_topic(question: str) -> Optional[str]:
     """对用户问题做话题分类，返回最匹配的话题域（纯关键词为主，embedding兜底）"""
     q_lower = question.lower()
-    
+
     # 1. 关键词匹配（主方案，更快更准）
     kw_scores = {}
     for topic, info in TOPIC_KEYWORDS.items():
@@ -121,23 +203,23 @@ def classify_topic(question: str) -> Optional[str]:
                 score += 3
         if score > 0:
             kw_scores[topic] = score
-    
+
     # 高置信度关键词命中 → 直接返回
     for topic, score in kw_scores.items():
         if score >= 3:
             return topic
-    
+
     # 单个关键词命中 → 返回得分最高的
     if kw_scores:
         kw_best = max(kw_scores, key=kw_scores.get)
         if kw_scores[kw_best] >= 1:
             return kw_best
-    
+
     # 2. embedding兜底：关键词没命中时用语义判断
-    if not hasattr(classify_topic, '_desc_vecs'):
+    if not hasattr(classify_topic, "_desc_vecs"):
         classify_topic._desc_vecs = {}
     desc_vecs = classify_topic._desc_vecs
-    
+
     query_vec = get_embedding(question)
     best_topic, best_score = None, 0
     for topic, desc in TOPIC_DESCRIPTIONS.items():
@@ -146,11 +228,12 @@ def classify_topic(question: str) -> Optional[str]:
         sim = cosine_similarity(query_vec, desc_vecs[topic])
         if sim > best_score:
             best_score, best_topic = sim, topic
-    
+
     return best_topic if best_score >= 0.35 else None
 
 
 # ===== 域内检索 =====
+
 
 def _domain_filter_sql(topic: Optional[str]) -> Tuple[str, list]:
     """生成按话题域过滤的SQL条件"""
@@ -206,18 +289,18 @@ def domain_fulltext_search(query: str, topic: Optional[str], limit: int = 5) -> 
             full_params = [query, query] + params + [limit]
             cur.execute(sql, full_params)
             rows = cur.fetchall()
-            if rows and rows[0]['score'] > 0.5:
+            if rows and rows[0]["score"] > 0.5:
                 return [dict(r) for r in rows]
     finally:
         conn.close()
-    
+
     # 回退：关键词LIKE检索
-    cjk = re.findall(r'[\u4e00-\u9fff]{2,}', query)
-    eng = re.findall(r'[a-zA-Z][a-zA-Z0-9+#.-]{1,}', query)
+    cjk = re.findall(r"[\u4e00-\u9fff]{2,}", query)
+    eng = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", query)
     keywords = [w for w in cjk if len(w) >= 2] + eng
     if not keywords:
         return []
-    
+
     conn = pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
@@ -227,34 +310,36 @@ def domain_fulltext_search(query: str, topic: Optional[str], limit: int = 5) -> 
                 cur.execute(
                     "SELECT id, category, question, answer, difficulty, related_skills "
                     "FROM interview_qa_pairs WHERE question LIKE %s",
-                    (f'%{w}%',)
+                    (f"%{w}%",),
                 )
                 for row in cur.fetchall():
-                    candidates.add((row['id'], row['question']))
-            
+                    candidates.add((row["id"], row["question"]))
+
             if candidates:
                 import collections
+
                 # 统计每道题被多少关键词匹配到
                 counter = collections.Counter(qid for qid, _ in candidates)
                 best_id = counter.most_common(1)[0][0]
                 cur.execute(
                     "SELECT id, category, question, answer, difficulty, related_skills "
-                    "FROM interview_qa_pairs WHERE id = %s", (best_id,)
+                    "FROM interview_qa_pairs WHERE id = %s",
+                    (best_id,),
                 )
                 row = cur.fetchone()
                 if row:
                     return [dict(row)]
-            
+
             # 大范围LIKE检索
             conditions, params = [], []
             for w in keywords[:8]:
                 conditions.append("(question LIKE %s OR answer LIKE %s)")
-                params.extend([f'%{w}%', f'%{w}%'])
+                params.extend([f"%{w}%", f"%{w}%"])
             filter_sql, filter_params = _domain_filter_sql(topic)
             sql = f"""
                 SELECT id, category, question, answer, difficulty, related_skills
                 FROM interview_qa_pairs
-                WHERE ({' OR '.join(conditions)})
+                WHERE ({" OR ".join(conditions)})
                 {filter_sql}
                 ORDER BY id
                 LIMIT {limit * 3}
@@ -262,9 +347,11 @@ def domain_fulltext_search(query: str, topic: Optional[str], limit: int = 5) -> 
             cur.execute(sql, params + filter_params)
             rows = cur.fetchall()
             if rows:
+
                 def match_score(row):
-                    q = row['question']
+                    q = row["question"]
                     return sum(1 for w in keywords if w.lower() in q.lower())
+
                 rows.sort(key=match_score, reverse=True)
                 return [dict(r) for r in rows[:limit]]
     finally:
@@ -272,29 +359,28 @@ def domain_fulltext_search(query: str, topic: Optional[str], limit: int = 5) -> 
     return []
 
 
-def domain_semantic_search(query: str, topic: Optional[str],
-                           limit: int = 5, threshold: float = 0.55) -> List[Dict]:
+def domain_semantic_search(query: str, topic: Optional[str], limit: int = 5, threshold: float = 0.55) -> List[Dict]:
     """域内语义检索（主检索方案）
-    
+
     核心方案：embedding语义匹配，能处理同义词和不同表达。
     阈值0.55比之前的0.65宽松，提升召回率。
     """
     qas = _load_qa_in_domain(topic)
     if not qas:
         return []
-    
+
     query_vec = get_embedding(query)
     results = []
     for qa in qas:
         try:
-            stored_vec = json.loads(qa['embedding'])
+            stored_vec = json.loads(qa["embedding"])
             sim = cosine_similarity(query_vec, stored_vec)
-            results.append({**qa, 'similarity': round(sim, 4)})
+            results.append({**qa, "similarity": round(sim, 4)})
         except:
             continue
-    
-    results.sort(key=lambda x: x['similarity'], reverse=True)
-    return [r for r in results if r['similarity'] >= threshold][:limit]
+
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+    return [r for r in results if r["similarity"] >= threshold][:limit]
 
 
 def domain_exact_match(query: str, topic: Optional[str]) -> Optional[Dict]:
@@ -304,15 +390,19 @@ def domain_exact_match(query: str, topic: Optional[str]) -> Optional[Dict]:
         with conn.cursor() as cur:
             if topic:
                 topic_to_category = {
-                    "RAG": "RAG", "Agent": "Agent", "大模型": "大模型",
-                    "工程化": "工程化", "Python": "Python", "Prompt Engineering": "大模型",
+                    "RAG": "RAG",
+                    "Agent": "Agent",
+                    "大模型": "大模型",
+                    "工程化": "工程化",
+                    "Python": "Python",
+                    "Prompt Engineering": "大模型",
                 }
                 cat = topic_to_category.get(topic)
                 if cat:
                     cur.execute(
                         "SELECT id, category, question, answer, difficulty, related_skills "
                         "FROM interview_qa_pairs WHERE question = %s AND category = %s LIMIT 1",
-                        (query, cat)
+                        (query, cat),
                     )
                     row = cur.fetchone()
                     if row:
@@ -321,7 +411,7 @@ def domain_exact_match(query: str, topic: Optional[str]) -> Optional[Dict]:
             cur.execute(
                 "SELECT id, category, question, answer, difficulty, related_skills "
                 "FROM interview_qa_pairs WHERE question LIKE %s LIMIT 1",
-                (f'%{query}%',)
+                (f"%{query}%",),
             )
             row = cur.fetchone()
             if row:
@@ -333,8 +423,10 @@ def domain_exact_match(query: str, topic: Optional[str]) -> Optional[Dict]:
 
 # ===== 同域推荐 =====
 
-def get_related_questions(question: str, topic: Optional[str],
-                          current_id: Optional[int] = None, limit: int = 3) -> List[Dict]:
+
+def get_related_questions(
+    question: str, topic: Optional[str], current_id: Optional[int] = None, limit: int = 3
+) -> List[Dict]:
     """推荐同域内相关问题（排除当前匹配的题）"""
     conn = pymysql.connect(**DB_CONFIG)
     try:
@@ -350,20 +442,20 @@ def get_related_questions(question: str, topic: Optional[str],
             rows = cur.fetchall()
     finally:
         conn.close()
-    
+
     # 排除当前问题，按关键词重叠排序
-    q_words = set(re.findall(r'[\u4e00-\u9fff]{2,}', question.lower()))
-    q_words.update(w.lower() for w in re.findall(r'[a-zA-Z][a-zA-Z0-9+#.-]{1,}', question))
-    
+    q_words = set(re.findall(r"[\u4e00-\u9fff]{2,}", question.lower()))
+    q_words.update(w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", question))
+
     scored = []
     for r in rows:
-        if current_id and r['id'] == current_id:
+        if current_id and r["id"] == current_id:
             continue
-        r_words = set(re.findall(r'[\u4e00-\u9fff]{2,}', r['question'].lower()))
-        r_words.update(w.lower() for w in re.findall(r'[a-zA-Z][a-zA-Z0-9+#.-]{1,}', r['question']))
+        r_words = set(re.findall(r"[\u4e00-\u9fff]{2,}", r["question"].lower()))
+        r_words.update(w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", r["question"]))
         overlap = len(q_words & r_words)
-        scored.append((overlap, r['question'], r['id']))
-    
+        scored.append((overlap, r["question"], r["id"]))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     return [{"question": q[1], "id": q[2]} for q in scored[:limit] if q[0] > 0]
 
@@ -393,12 +485,16 @@ def check_short_answer(query: str) -> Optional[str]:
 
 
 def ask_deepseek(question: str) -> str:
-    """DeepSeek API兜底"""
-    import urllib.request, os
-    with open(os.path.expanduser('~/.hermes/.env')) as f:
-        content = f.read()
-    m = re.search(r'DEEPSEEK_API_KEY=(\S+)', content)
-    api_key = m.group(1) if m else ''
+    """AI API兜底（从SQLite设置读取配置）"""
+    import urllib.request, os, sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    from boss_state import get_setting, init_db
+
+    init_db()
+    api_key = get_setting("ai_api_key") or ""
+    api_url = (get_setting("ai_base_url") or "https://api.deepseek.com") + "/chat/completions"
+    model = get_setting("ai_model") or "deepseek-chat"
 
     prompt = f"""你是一个AI应用开发专家。用户问了一个技术问题，请用简短（50-100字）、准确的方式回答。
 
@@ -410,28 +506,28 @@ def ask_deepseek(question: str) -> str:
 - 技术术语要准确
 - 如果是概念性问题，给出定义+一句话解释"""
 
-    payload = json.dumps({
-        'model': 'deepseek-chat',
-        'messages': [{'role': 'user', 'content': prompt}],
-        'max_tokens': 200,
-        'temperature': 0.2,
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 200,
+            "temperature": 0.2,
+        }
+    ).encode()
     req = urllib.request.Request(
-        'https://api.deepseek.com/v1/chat/completions',
-        data=payload,
-        headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {api_key}'}
+        api_url, data=payload, headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     )
     resp = urllib.request.urlopen(req, timeout=15)
     data = json.loads(resp.read().decode())
-    return data['choices'][0]['message']['content']
+    return data["choices"][0]["message"]["content"]
 
 
 def _keyword_overlap(question: str, matched: str) -> float:
     """计算用户问题与匹配结果的关键词重叠比例"""
-    q_words = set(re.findall(r'[\u4e00-\u9fff]{2,}', question.lower()))
-    q_words.update(w.lower() for w in re.findall(r'[a-zA-Z][a-zA-Z0-9+#.-]{1,}', question))
-    m_words = set(re.findall(r'[\u4e00-\u9fff]{2,}', matched.lower()))
-    m_words.update(w.lower() for w in re.findall(r'[a-zA-Z][a-zA-Z0-9+#.-]{1,}', matched))
+    q_words = set(re.findall(r"[\u4e00-\u9fff]{2,}", question.lower()))
+    q_words.update(w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", question))
+    m_words = set(re.findall(r"[\u4e00-\u9fff]{2,}", matched.lower()))
+    m_words.update(w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", matched))
     if not q_words or not m_words:
         return 1.0
     overlap = len(q_words & m_words)
@@ -439,6 +535,7 @@ def _keyword_overlap(question: str, matched: str) -> float:
 
 
 # ===== 主入口 =====
+
 
 def fast_answer(question: str) -> Dict[str, Any]:
     """
@@ -456,7 +553,7 @@ def fast_answer(question: str) -> Dict[str, Any]:
     cached = query_cache.get(question)
     if cached:
         elapsed = time.time() - start
-        resp = {**cached, 'layer': 0, 'elapsed_ms': round(elapsed * 1000)}
+        resp = {**cached, "layer": 0, "elapsed_ms": round(elapsed * 1000)}
         return resp
 
     # L0.5: 话题分类
@@ -466,16 +563,16 @@ def fast_answer(question: str) -> Dict[str, Any]:
     result = domain_exact_match(question, topic)
     if result:
         elapsed = time.time() - start
-        related = get_related_questions(result['question'], topic or result['category'], result['id'])
+        related = get_related_questions(result["question"], topic or result["category"], result["id"])
         resp = {
-            'answer': result['answer'],
-            'category': result['category'],
-            'question': result['question'],
-            'matched': result['question'],
-            'topic': topic,
-            'layer': 1,
-            'elapsed_ms': round(elapsed * 1000),
-            'related': related,
+            "answer": result["answer"],
+            "category": result["category"],
+            "question": result["question"],
+            "matched": result["question"],
+            "topic": topic,
+            "layer": 1,
+            "elapsed_ms": round(elapsed * 1000),
+            "related": related,
         }
         query_cache.set(question, resp)
         return resp
@@ -485,48 +582,48 @@ def fast_answer(question: str) -> Dict[str, Any]:
     if sem:
         best = sem[0]
         elapsed = time.time() - start
-        
+
         # 置信度检查：关键词重叠太低说明embedding只靠语义框架匹配而非真正理解
-        overlap_ratio = _keyword_overlap(question, best['question'])
-        
+        overlap_ratio = _keyword_overlap(question, best["question"])
+
         # 低置信度（关键词完全没重叠）→ 放弃检索结果，走DeepSeek
         if overlap_ratio < 0.18:
-            confidence = 'low'
+            confidence = "low"
             # 不走缓存，直接降级到DeepSeek
             try:
                 answer = ask_deepseek(question)
                 ds_elapsed = time.time() - start
                 resp = {
-                    'answer': answer,
-                    'category': 'AI生成',
-                    'question': question,
-                    'matched': question,
-                    'confidence': 'low',
-                    'topic': topic,
-                    'layer': 4,
-                    'elapsed_ms': round(ds_elapsed * 1000),
-                    'related': [],
-                    'note': '知识库中未找到精确匹配，以下为AI生成回答，仅供参考',
+                    "answer": answer,
+                    "category": "AI生成",
+                    "question": question,
+                    "matched": question,
+                    "confidence": "low",
+                    "topic": topic,
+                    "layer": 4,
+                    "elapsed_ms": round(ds_elapsed * 1000),
+                    "related": [],
+                    "note": "知识库中未找到精确匹配，以下为AI生成回答，仅供参考",
                 }
                 query_cache.set(question, resp)
                 return resp
             except:
                 # DeepSeek失败，退回检索结果
                 pass
-        
-        confidence = 'medium'
-        related = get_related_questions(best['question'], topic or best['category'], best['id'])
+
+        confidence = "medium"
+        related = get_related_questions(best["question"], topic or best["category"], best["id"])
         resp = {
-            'answer': best['answer'],
-            'category': best['category'],
-            'question': best['question'],
-            'matched': best['question'],
-            'similarity': best.get('similarity', 0),
-            'confidence': confidence,
-            'topic': topic,
-            'layer': 2,
-            'elapsed_ms': round(elapsed * 1000),
-            'related': related,
+            "answer": best["answer"],
+            "category": best["category"],
+            "question": best["question"],
+            "matched": best["question"],
+            "similarity": best.get("similarity", 0),
+            "confidence": confidence,
+            "topic": topic,
+            "layer": 2,
+            "elapsed_ms": round(elapsed * 1000),
+            "related": related,
         }
         query_cache.set(question, resp)
         return resp
@@ -536,14 +633,14 @@ def fast_answer(question: str) -> Dict[str, Any]:
     if preset:
         elapsed = time.time() - start
         resp = {
-            'answer': preset,
-            'category': topic or '快速应答',
-            'question': question,
-            'matched': question,
-            'topic': topic,
-            'layer': 3,
-            'elapsed_ms': round(elapsed * 1000),
-            'related': [],
+            "answer": preset,
+            "category": topic or "快速应答",
+            "question": question,
+            "matched": question,
+            "topic": topic,
+            "layer": 3,
+            "elapsed_ms": round(elapsed * 1000),
+            "related": [],
         }
         query_cache.set(question, resp)
         return resp
@@ -553,26 +650,26 @@ def fast_answer(question: str) -> Dict[str, Any]:
         answer = ask_deepseek(question)
         elapsed = time.time() - start
         resp = {
-            'answer': answer,
-            'category': 'AI生成',
-            'question': question,
-            'matched': question,
-            'topic': topic,
-            'layer': 4,
-            'elapsed_ms': round(elapsed * 1000),
-            'related': [],
+            "answer": answer,
+            "category": "AI生成",
+            "question": question,
+            "matched": question,
+            "topic": topic,
+            "layer": 4,
+            "elapsed_ms": round(elapsed * 1000),
+            "related": [],
         }
         query_cache.set(question, resp)
         return resp
     except Exception as e:
         elapsed = time.time() - start
         return {
-            'answer': f'抱歉，未能找到答案。错误：{str(e)}。请换个问法试试。',
-            'category': '未知',
-            'question': question,
-            'matched': question,
-            'topic': topic,
-            'layer': -1,
-            'elapsed_ms': round(elapsed * 1000),
-            'related': [],
+            "answer": f"抱歉，未能找到答案。错误：{str(e)}。请换个问法试试。",
+            "category": "未知",
+            "question": question,
+            "matched": question,
+            "topic": topic,
+            "layer": -1,
+            "elapsed_ms": round(elapsed * 1000),
+            "related": [],
         }

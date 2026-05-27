@@ -364,9 +364,10 @@ def doctor():
 
     try:
         _sys.path.insert(0, str(Path(__file__).parent / "interview"))
-        from llm_client import DEEPSEEK_API_KEY, DEEPSEEK_BASE
+        from llm_client import _load_ai_config
 
-        ai_key_ok = bool(DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 10)
+        cfg = _load_ai_config()
+        ai_key_ok = bool(cfg.get("api_key") and len(cfg["api_key"]) > 10)
     except Exception:
         ai_key_ok = False
 
@@ -1060,10 +1061,11 @@ async def chat_monitor_loop():
     # 验证 AI 回复系统
     try:
         sys.path.insert(0, str(Path(__file__).parent / "interview"))
-        from llm_client import DEEPSEEK_API_KEY
+        from llm_client import _load_ai_config
 
-        if DEEPSEEK_API_KEY and "..." not in DEEPSEEK_API_KEY and len(DEEPSEEK_API_KEY) > 20:
-            print(f"[监控] AI API 已配置，自动回复就绪")
+        cfg = _load_ai_config()
+        if cfg["api_key"] and len(cfg["api_key"]) > 10:
+            print(f"[监控] AI API 已配置（{cfg['model']}），自动回复就绪")
         else:
             print("[监控] ⚠️ AI API Key 未配置，请在前端设置页配置")
     except Exception as e:

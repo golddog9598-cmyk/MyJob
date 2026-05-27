@@ -18,7 +18,7 @@ EMBED_MODEL = "nomic-embed-text"
 LLM_MODEL = "qwen2.5:14b"
 
 
-# AI配置（优先从SQLite设置读取，兼容旧.env文件）
+# AI配置（每次调用时从SQLite设置读取）
 def _load_ai_config():
     cfg = {
         "api_key": "",
@@ -28,9 +28,10 @@ def _load_ai_config():
     try:
         import sys, os
 
-        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-        from boss_state import get_setting
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from boss_state import get_setting, get_db
 
+        get_db()
         key = get_setting("ai_api_key")
         if key:
             cfg["api_key"] = key
@@ -42,35 +43,7 @@ def _load_ai_config():
             cfg["model"] = model
     except Exception:
         pass
-    # 如果SQLite中没有，从环境变量/文件兜底
-    if not cfg["api_key"]:
-        cfg["api_key"] = _load_deprecated_key()
     return cfg
-
-
-def _load_deprecated_key() -> str:
-    env_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if env_key and "..." not in env_key and env_key.count("*") < 5:
-        return env_key
-    env_paths = [
-        os.path.expanduser("~/.hermes/.env"),
-        os.path.join(os.path.dirname(__file__), ".env"),
-    ]
-    for path in env_paths:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                m = re.search(r"DEEPSEEK_API_KEY=(\S+)", f.read())
-                if m:
-                    key = m.group(1).strip().strip("'\"")
-                    if key and "..." not in key:
-                        return key
-    return env_key or ""
-
-
-_AI_CFG = _load_ai_config()
-DEEPSEEK_API_KEY = _AI_CFG["api_key"]
-DEEPSEEK_BASE = _AI_CFG["base_url"]
-DEEPSEEK_MODEL = _AI_CFG["model"]
 
 
 def get_embedding(text: str) -> List[float]:
@@ -94,9 +67,7 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
-def llm_chat_ollama(
-    messages: list, system_prompt: Optional[str] = None, temperature: float = 0.7
-) -> str:
+def llm_chat_ollama(messages: list, system_prompt: Optional[str] = None, temperature: float = 0.7) -> str:
     """调用Ollama大模型（出题用）"""
     if system_prompt:
         messages = [{"role": "system", "content": system_prompt}] + messages
@@ -114,25 +85,27 @@ def llm_chat_ollama(
     return data["message"]["content"]
 
 
-def llm_chat_deepseek(
-    messages: list, system_prompt: Optional[str] = None, temperature: float = 0.3
-) -> str:
-    """调用DeepSeek API（批改用）"""
+def llm_chat_deepseek(messages: list, system_prompt: Optional[str] = None, temperature: float = 0.3) -> str:
+    """调用AI API（懒加载配置，每次从SQLite读取）"""
+    cfg = _load_ai_config()
+    if not cfg["api_key"]:
+        raise RuntimeError("AI API Key未配置，请在设置页配置")
+
     if system_prompt:
         messages = [{"role": "system", "content": system_prompt}] + messages
 
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": cfg["model"],
         "messages": messages,
         "temperature": temperature,
         "stream": False,
     }
 
     resp = httpx.post(
-        f"{DEEPSEEK_BASE}/v1/chat/completions",
+        f"{cfg['base_url']}/chat/completions",
         json=payload,
         headers={
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Authorization": f"Bearer {cfg['api_key']}",
             "Content-Type": "application/json",
         },
         timeout=120,
