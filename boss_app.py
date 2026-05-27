@@ -46,6 +46,9 @@ from boss_state import (
     get_all_settings,
     get_daily_stats,
     get_wechat_exchanges,
+    get_today_pending_count,
+    count_hours_replied_in_range,
+    count_interest_level,
 )
 from boss_replier import generate_greeting
 
@@ -325,6 +328,20 @@ def get_status():
         "today_applications": get_today_application_count(),
         "active_conversations": len(list_active_conversations()),
         "daily_stats": get_daily_stats(),
+    }
+
+
+@app.get("/api/stats")
+def get_stats():
+    """投递转化漏斗统计。"""
+    today = get_daily_stats()
+    return {
+        "today_applications": get_today_application_count(),
+        "pending": get_today_pending_count(),
+        "replied": count_hours_replied_in_range(24),
+        "interview": count_interest_level("high"),
+        "active_conversations": len(list_active_conversations()),
+        "daily_stats": today,
     }
 
 

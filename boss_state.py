@@ -131,9 +131,7 @@ def init_db():
         "search_keywords": "AI Agent,大模型开发,AI产品经理,RAG开发,大模型应用",
     }
     for k, v in defaults.items():
-        db.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v)
-        )
+        db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
     db.commit()
 
 
@@ -148,6 +146,7 @@ def _rows_to_list(rows) -> List[dict]:
 # ══════════════════════════════════════
 #  Applications
 # ══════════════════════════════════════
+
 
 def add_application(job: dict) -> int:
     db = get_db()
@@ -173,17 +172,11 @@ def add_application(job: dict) -> int:
 
 
 def get_application(app_id: int) -> Optional[dict]:
-    return _row_to_dict(
-        get_db().execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
-    )
+    return _row_to_dict(get_db().execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone())
 
 
 def get_application_by_url(url: str) -> Optional[dict]:
-    return _row_to_dict(
-        get_db()
-        .execute("SELECT * FROM applications WHERE job_url=?", (url,))
-        .fetchone()
-    )
+    return _row_to_dict(get_db().execute("SELECT * FROM applications WHERE job_url=?", (url,)).fetchone())
 
 
 def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
@@ -209,7 +202,7 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
 
     db = get_db()
     db.execute(
-        f"""UPDATE applications SET {', '.join(assignments)},
+        f"""UPDATE applications SET {", ".join(assignments)},
             updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         params,
     )
@@ -225,15 +218,11 @@ def list_applications(status: Optional[str] = None, limit: int = 50) -> List[dic
             (status, limit),
         ).fetchall()
     else:
-        rows = db.execute(
-            "SELECT * FROM applications ORDER BY updated_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = db.execute("SELECT * FROM applications ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
     return _rows_to_list(rows)
 
 
-def update_application_status(
-    app_id: int, status: str, greeting_text: Optional[str] = None
-):
+def update_application_status(app_id: int, status: str, greeting_text: Optional[str] = None):
     db = get_db()
     if greeting_text:
         db.execute(
@@ -250,9 +239,33 @@ def update_application_status(
 
 
 def get_today_application_count() -> int:
-    row = get_db().execute(
-        "SELECT COUNT(*) as cnt FROM applications WHERE date(greeting_sent_at)=date('now','localtime')"
-    ).fetchone()
+    row = (
+        get_db()
+        .execute("SELECT COUNT(*) as cnt FROM applications WHERE date(greeting_sent_at)=date('now','localtime')")
+        .fetchone()
+    )
+    return row["cnt"] if row else 0
+
+
+def get_today_pending_count() -> int:
+    row = get_db().execute("SELECT COUNT(*) as cnt FROM applications WHERE status='pending'").fetchone()
+    return row["cnt"] if row else 0
+
+
+def count_hours_replied_in_range(hours: int) -> int:
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) as cnt FROM conversations WHERE last_message_from='hr' AND datetime(last_message_at) > datetime('now','localtime',? || ' hours')",
+            (f"-{hours}",),
+        )
+        .fetchone()
+    )
+    return row["cnt"] if row else 0
+
+
+def count_interest_level(level: str) -> int:
+    row = get_db().execute("SELECT COUNT(*) as cnt FROM conversations WHERE interest_level=?", (level,)).fetchone()
     return row["cnt"] if row else 0
 
 
@@ -272,22 +285,16 @@ def get_pending_applications(limit: int = 50) -> List[dict]:
 # ══════════════════════════════════════
 
 
-def get_or_create_conversation(
-    application_id: int, hr_name: str, hr_company: str, job_title: str
-) -> int:
+def get_or_create_conversation(application_id: int, hr_name: str, hr_company: str, job_title: str) -> int:
     db = get_db()
     if application_id:
-        row = db.execute(
-            "SELECT id FROM conversations WHERE application_id=?", (application_id,)
-        ).fetchone()
+        row = db.execute("SELECT id FROM conversations WHERE application_id=?", (application_id,)).fetchone()
         if row:
             return row["id"]
     # 按 HR 名字查重（精确匹配，去空白）
     name = hr_name.strip() if hr_name else ""
     if name:
-        row = db.execute(
-            "SELECT id FROM conversations WHERE hr_name=? AND status!='closed'", (name,)
-        ).fetchone()
+        row = db.execute("SELECT id FROM conversations WHERE hr_name=? AND status!='closed'", (name,)).fetchone()
         if row:
             return row["id"]
     cur = db.execute(
@@ -300,20 +307,12 @@ def get_or_create_conversation(
 
 
 def get_conversation(conv_id: int) -> Optional[dict]:
-    return _row_to_dict(
-        get_db()
-        .execute("SELECT * FROM conversations WHERE id=?", (conv_id,))
-        .fetchone()
-    )
+    return _row_to_dict(get_db().execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone())
 
 
 def list_active_conversations() -> List[dict]:
     return _rows_to_list(
-        get_db()
-        .execute(
-            "SELECT * FROM conversations WHERE status!='closed' ORDER BY updated_at DESC"
-        )
-        .fetchall()
+        get_db().execute("SELECT * FROM conversations WHERE status!='closed' ORDER BY updated_at DESC").fetchall()
     )
 
 
@@ -328,9 +327,7 @@ def find_conversation_by_hr_name(hr_name: str) -> Optional[dict]:
     )
 
 
-def update_conversation_last_message(
-    conv_id: int, text: str, sender: str, unread_delta: int = 0
-):
+def update_conversation_last_message(conv_id: int, text: str, sender: str, unread_delta: int = 0):
     db = get_db()
     db.execute(
         """UPDATE conversations SET last_message_text=?, last_message_from=?,
@@ -366,25 +363,20 @@ def update_conversation_wechat(conv_id: int, wechat_id: str):
 
 
 def mark_resume_sent(conv_id: int):
-    get_db().execute(
-        "UPDATE conversations SET resume_sent=1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (conv_id,)
-    )
+    get_db().execute("UPDATE conversations SET resume_sent=1, updated_at=CURRENT_TIMESTAMP WHERE id=?", (conv_id,))
     get_db().commit()
 
 
 def mark_phone_shared(conv_id: int):
-    get_db().execute(
-        "UPDATE conversations SET phone_shared=1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (conv_id,)
-    )
+    get_db().execute("UPDATE conversations SET phone_shared=1, updated_at=CURRENT_TIMESTAMP WHERE id=?", (conv_id,))
     get_db().commit()
 
 
 def get_wechat_exchanges() -> List[dict]:
     """返回所有已获取到微信号的会话，包含岗位详情。"""
     return _rows_to_list(
-        get_db().execute(
+        get_db()
+        .execute(
             """SELECT c.id, c.hr_name, c.hr_company, c.job_title, c.hr_wechat,
                       c.wechat_shared_at, c.interest_level,
                       a.city, a.salary, a.experience, a.education, a.description
@@ -392,7 +384,8 @@ def get_wechat_exchanges() -> List[dict]:
                LEFT JOIN applications a ON c.application_id = a.id
                WHERE c.hr_wechat IS NOT NULL AND c.hr_wechat != ''
                ORDER BY c.wechat_shared_at DESC"""
-        ).fetchall()
+        )
+        .fetchall()
     )
 
 
@@ -480,10 +473,14 @@ def get_last_hr_message(conversation_id: int) -> Optional[dict]:
 
 
 def message_exists(conversation_id: int, content: str, sender: str) -> bool:
-    row = get_db().execute(
-        "SELECT id FROM messages WHERE conversation_id=? AND content=? AND sender=? ORDER BY created_at DESC LIMIT 1",
-        (conversation_id, content, sender),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT id FROM messages WHERE conversation_id=? AND content=? AND sender=? ORDER BY created_at DESC LIMIT 1",
+            (conversation_id, content, sender),
+        )
+        .fetchone()
+    )
     return row is not None
 
 
@@ -493,11 +490,7 @@ def message_exists(conversation_id: int, content: str, sender: str) -> bool:
 
 
 def get_setting(key: str, default: str = "") -> str:
-    row = (
-        get_db()
-        .execute("SELECT value FROM settings WHERE key=?", (key,))
-        .fetchone()
-    )
+    row = get_db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     return row["value"] if row else default
 
 
@@ -524,9 +517,7 @@ def _today() -> str:
 
 
 def _ensure_today():
-    get_db().execute(
-        "INSERT OR IGNORE INTO daily_stats (date) VALUES (?)", (_today(),)
-    )
+    get_db().execute("INSERT OR IGNORE INTO daily_stats (date) VALUES (?)", (_today(),))
     get_db().commit()
 
 
@@ -541,18 +532,18 @@ def increment_daily_stat(field: str):
 
 def get_daily_stats(date_str: Optional[str] = None) -> dict:
     d = date_str or _today()
-    row = (
-        get_db()
-        .execute("SELECT * FROM daily_stats WHERE date=?", (d,))
-        .fetchone()
-    )
+    row = get_db().execute("SELECT * FROM daily_stats WHERE date=?", (d,)).fetchone()
     return dict(row) if row else {}
 
 
 def get_today_auto_reply_count() -> int:
-    row = get_db().execute(
-        "SELECT COUNT(*) as cnt FROM messages WHERE ai_generated=1 AND date(created_at)=date('now','localtime')"
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) as cnt FROM messages WHERE ai_generated=1 AND date(created_at)=date('now','localtime')"
+        )
+        .fetchone()
+    )
     return row["cnt"] if row else 0
 
 

@@ -262,6 +262,7 @@
         <button class="btn btn-primary" onclick="batchApplyAll()">一键投递待投递</button>
       </div>
       <div id="searchStatus"></div>
+      <div id="funnelBar" style="display:none;margin-top:12px;"></div>
     </div>
     <div class="jobs-grid" id="jobsGrid">
       <div class="empty">点击"搜索"获取岗位，或点击下方的"启动浏览器"后搜索</div>
@@ -566,6 +567,33 @@ function refreshStatus() {
     }
     document.getElementById('btnStart').disabled = s.browser_running;
   }).catch(() => {});
+  // 加载漏斗数据
+  fetch('/api/stats').then(r => r.json()).then(renderFunnel).catch(() => {});
+}
+
+function renderFunnel(d) {
+  if (!d || d.today_applications === undefined) return;
+  const el = document.getElementById('funnelBar');
+  if (!el) return;
+  const stages = [
+    { label: '待投递', value: d.pending || 0, color: 'var(--accent)' },
+    { label: '已投递', value: d.today_applications || 0, color: 'var(--green)' },
+    { label: 'HR回复', value: d.replied || 0, color: 'var(--orange)' },
+    { label: '面试', value: d.interview || 0, color: '#a855f7' },
+  ];
+  const max = Math.max(...stages.map(s => s.value), 1);
+  el.style.display = 'block';
+  el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">📊 投递转化漏斗</div>' +
+    stages.map(s => {
+      const pct = Math.round((s.value / max) * 100);
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="width:50px;font-size:12px;text-align:right;">${s.label}</span>
+        <div style="flex:1;background:var(--border);border-radius:4px;height:16px;overflow:hidden;">
+          <div style="background:${s.color};height:100%;width:${pct}%;transition:width 0.5s;"></div>
+        </div>
+        <span style="width:30px;font-size:12px;text-align:left;">${s.value}</span>
+      </div>`;
+    }).join('');
 }
 
 function updateStatusUI(s) {
