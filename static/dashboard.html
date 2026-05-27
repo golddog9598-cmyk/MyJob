@@ -1259,9 +1259,9 @@ function loadWechatExchanges() {
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
           ${time}${metaLine ? ' · ' + metaLine : ''}
         </div>
-        ${desc ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;line-height:1.5;background:#0a1222;padding:8px;border-radius:6px;">${esc(desc)}</div>` : ''}
+        ${desc ? `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;line-height:1.5;background:var(--bg);padding:10px;border-radius:6px;">${esc(desc)}</div>` : ''}
         <div style="display:flex;align-items:center;gap:8px;">
-          <code style="background:#0a1222;padding:6px 12px;border-radius:6px;font-size:15px;color:var(--accent);">${wechat}</code>
+          <code style="background:var(--bg);padding:6px 14px;border-radius:6px;font-size:15px;color:var(--accent);display:inline-block;">${wechat}</code>
           <button class="btn btn-sm btn-primary" onclick="copyWechat('${wechat.replace(/'/g,"\\'")}', this)">复制</button>
         </div>
       </div>`;
