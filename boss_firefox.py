@@ -724,12 +724,25 @@ class BossScraper:
             )
         return jobs
 
-    def _scroll_all(self):
+    def _scroll_all(self, max_scrolls: int = 60, stable_rounds: int = 3):
+        """持续滚动直到没有新内容加载，或达到最大滚动次数。"""
         try:
-            h = self.page.evaluate("document.body.scrollHeight")
-            for p in range(0, int(h) + 400, 400):
-                self.page.evaluate("window.scrollTo(0,%d)" % p)
-                time.sleep(random.uniform(0.3, 0.6))
+            last_height = 0
+            stable_count = 0
+            for _ in range(max_scrolls):
+                h = self.page.evaluate("document.body.scrollHeight")
+                if h == last_height:
+                    stable_count += 1
+                    if stable_count >= stable_rounds:
+                        break
+                else:
+                    stable_count = 0
+                    last_height = h
+                self.page.evaluate("window.scrollTo(0,%d)" % h)
+                time.sleep(random.uniform(0.5, 1.0))
+            # 滚回顶部，确保 DOM 完整渲染
+            self.page.evaluate("window.scrollTo(0,0)")
+            time.sleep(random.uniform(0.3, 0.5))
         except:
             pass
 
