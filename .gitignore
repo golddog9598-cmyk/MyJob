@@ -6,3 +6,10 @@ __pycache__/
 .DS_Store
 reports/
 .claude/
+.boss_profile/
+.pytest_cache/
+.ruff_cache/
+boss_data.db
+*.bak
+*.db-shm
+*.db-wal
