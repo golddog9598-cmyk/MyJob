@@ -13,3 +13,15 @@ boss_data.db
 *.bak
 *.db-shm
 *.db-wal
+
+# Secrets — never commit
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_dsa*
+id_ecdsa*
+*.p12
+*.pfx
+secrets/
+.credentials/

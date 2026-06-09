@@ -2023,7 +2023,8 @@ function sendManualMessage(){
 function toggleAutoReply(){
   if(!activeConvId)return;let conv=conversations.find(c=>c.id===activeConvId);if(!conv)return;
   const willEnable=!conv.auto_reply_enabled;
-  fetch('/api/conversations/'+activeConvId+'/auto-reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:willEnable})}).then(r=>r.json()).then(()=>{loadConversations().then(()=>selectConversation(activeConvId));toast(willEnable?'AI已开启':'AI已暂停',willEnable?'success':'info');});
+  const endpoint=willEnable?'/api/conversations/'+activeConvId+'/resume':'/api/conversations/'+activeConvId+'/pause';
+  fetch(endpoint,{method:'POST'}).then(r=>r.json()).then(()=>{loadConversations().then(()=>selectConversation(activeConvId));toast(willEnable?'AI已开启':'AI已暂停',willEnable?'success':'info');});
 }
 function navigateBrowserToChat(){fetch('/api/system/navigate-chat',{method:'POST'}).then(()=>toast('已导航到聊天页','info',1500)).catch(()=>toast('导航失败','error'));}
 
