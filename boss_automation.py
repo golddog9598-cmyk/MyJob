@@ -491,7 +491,8 @@ class BossAutomation(BossScraper):
             base = 60 * (2 ** (self._risk_strikes - 1))  # 频率限制：指数退避
         wait = min(base, 1800)
         self._cooldown_until = max(self._cooldown_until, time.time() + wait)
-        print(f"  🧊 风控冷却 {wait:.0f}s（strikes={self._risk_strikes}, 原因={category}）")
+        # 仅提示进入冷却，不展示剩余时间，避免在界面显示“冷却剩余时间”
+        print(f"  🧊 风控冷却中（strikes={self._risk_strikes}, 原因={category}）")
 
     def _cooldown_remaining(self) -> float:
         return max(0.0, self._cooldown_until - time.time())
@@ -503,7 +504,8 @@ class BossAutomation(BossScraper):
         """高风险动作前调用：若处于冷却期返回 False（应跳过本次动作）。"""
         remaining = self._cooldown_remaining()
         if remaining > 0:
-            print(f"  ⏸️ 处于风控冷却期，剩余 {remaining:.0f}s，跳过本次操作")
+            # 仅提示冷却中，不显示具体剩余秒数
+            print("  ⏸️ 处于风控冷却期，跳过本次操作")
             return False
         return True
 
@@ -727,8 +729,9 @@ class BossAutomation(BossScraper):
         for i, url in enumerate(job_urls):
             # 冷却期：等待结束（最多等一次冷却时长），避免硬撞风控
             if self.in_cooldown():
+                print("  🧊 批量投递遇冷却，暂缓继续...")
+                # 仍然实际等待冷却结束，但不打印剩余时间
                 wait = self._cooldown_remaining()
-                print(f"  🧊 批量投递遇冷却，等待 {wait:.0f}s 后继续...")
                 time.sleep(wait + random.uniform(2, 8))
 
             if i > 0:
