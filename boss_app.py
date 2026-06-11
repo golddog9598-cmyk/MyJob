@@ -53,8 +53,12 @@ from boss_state import (
     remove_from_shortlist,
     list_shortlists,
     is_in_shortlist,
+    list_jobs_by_company,
+    list_companies_by_position_count,
+    company_already_applied,
 )
-from boss_replier import generate_greeting
+from boss_replier import generate_greeting, generate_greeting_ai
+from boss_company import build_company_preview, rank_companies_by_position_count
 
 # ── FastAPI 应用 ──
 app = FastAPI(title="BOSS直聘自动化控制台", version="1.0.0")
@@ -207,10 +211,14 @@ def _normalize_job_url(url: str) -> str:
 def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
     """统一搜索结果和数据库记录的字段名，方便前端直接渲染。"""
     application = application or {}
+    company = application.get("company") or job.get("company", "")
+    company_id = application.get("company_id") or job.get("company_id", "")
     return {
         "id": application.get("id"),
         "job_title": application.get("job_title") or job.get("title", ""),
-        "company": application.get("company") or job.get("company", ""),
+        "company": company,
+        "company_id": company_id,
+        "company_already_applied": company_already_applied(company=company, company_id=company_id),
         "salary": application.get("salary") or job.get("salary", ""),
         "job_url": application.get("job_url") or _normalize_job_url(job.get("url", "")),
         "city": application.get("city") or job.get("city", ""),
@@ -281,6 +289,8 @@ class SendMessageRequest(BaseModel):
 class SettingsUpdate(BaseModel):
     greeting_template: Optional[str] = None
     greeting_enabled: Optional[str] = None
+    greeting_mode: Optional[str] = None  # 招呼语模式：template / smart
+    smart_greeting_prompt: Optional[str] = None  # 智能跟进 Prompt
     ai_reply_style: Optional[str] = None
     daily_apply_limit: Optional[str] = None
     auto_reply_enabled: Optional[str] = None
@@ -290,12 +300,36 @@ class SettingsUpdate(BaseModel):
     batch_delay_max_sec: Optional[str] = None
     resume_summary: Optional[str] = None
     wechat_id: Optional[str] = None
-    search_keywords: Optional[str] = None  # 逗号分隔的搜索关键词
-    default_city: Optional[str] = None  # 默认搜索城市
-    selector_overrides: Optional[str] = None  # JSON 格式的选择器覆盖
-    ai_api_key: Optional[str] = None  # AI API Key
-    ai_base_url: Optional[str] = None  # AI Base URL
-    ai_model: Optional[str] = None  # AI 模型名称
+    search_keywords: Optional[str] = None
+    default_city: Optional[str] = None
+    user_location: Optional[str] = None  # 用户所在地（用于优先搜索）
+    selector_overrides: Optional[str] = None
+    ai_api_key: Optional[str] = None
+    ai_base_url: Optional[str] = None
+    ai_model: Optional[str] = None
+    filter_inactive_hr: Optional[str] = None  # 是否过滤不活跃 HR
+    max_hr_inactive_days: Optional[str] = None  # HR 不活跃天数阈值
+    dedup_company_by_default: Optional[str] = None  # 默认公司去重
+    conversation_cooldown_sec: Optional[str] = None  # 会话冷却时间
+    reply_rules_system_prompt: Optional[str] = None  # 回复规则 prompt
+
+
+class CompanyPreviewRequest(BaseModel):
+    keyword: Optional[str] = ""
+    city: Optional[str] = ""
+    company: Optional[str] = ""
+    company_id: Optional[str] = ""
+
+
+class SmartSendRequest(BaseModel):
+    company: Optional[str] = ""
+    company_id: Optional[str] = ""
+    job_url: Optional[str] = ""
+    top_hr: Optional[dict] = None
+    hr_name: Optional[str] = ""
+    greeting: Optional[str] = ""
+    confirm: bool = False
+    targets: Optional[list] = None  # [{company, job_url, hr_name, hr_title}, ...]
 
 
 # ══════════════════════════════════════
@@ -385,7 +419,15 @@ def doctor():
         "today_applications": get_today_application_count(),
         "pending_jobs": get_today_pending_count(),
     }
-    all_ok = all(v.get("ok", True) for v in checks.values())
+    # 只对包含 ok 字段的检查项汇总 all_ok，数值项不参与
+    _oks = []
+    for v in checks.values():
+        if isinstance(v, dict) and "ok" in v:
+            try:
+                _oks.append(bool(v.get("ok", True)))
+            except Exception:
+                _oks.append(True)
+    all_ok = all(_oks) if _oks else True
     return {"ok": all_ok, "checks": checks}
 
 
@@ -673,6 +715,302 @@ async def search_jobs(req: SearchRequest):
         monitor_paused = was_paused
 
 
+# ══════════════════════════════════════
+#  公司画像 & smart-send
+# ══════════════════════════════════════
+
+_INVALID_COMPANY_RE = re.compile(
+    r"^("
+    r"\d+[-~]\d+K"  # 薪资：5-10K
+    r"|\d+-\d+元"  # 薪资：3000-5000元
+    r"|\d+元/[时月]"  # 薪资：20元/时
+    r"|\d+-\d+年"  # 经验：1-3年
+    r"|\d+年以[上内]"  # 经验：3年以上
+    r"|1年以内"
+    r"|经验不限|学历不限|不限"
+    r"|在校|应届|实习"
+    r"|本科|硕士|博士|大专|中专|中技|高中|初中"
+    r"|全职|兼职"
+    r"|\d+天/周"  # 5天/周
+    r"|\d+-\d+人"  # 20-99人
+    r"|\d+人以上"
+    r"|\d+人"
+    r")$",
+    re.I,
+)
+
+
+def _is_valid_company(name: str) -> bool:
+    """判断公司名是否有效（排除把经验/学历/薪资当公司名的脏数据）。"""
+    if not name or len(name) < 2:
+        return False
+    name = name.strip()
+    if _INVALID_COMPANY_RE.match(name):
+        return False
+    # "中专/中技" 这种斜杠分隔的短词
+    if "/" in name and len(name) <= 8:
+        parts = name.split("/")
+        if all(len(p.strip()) <= 4 for p in parts):
+            # 检查是否每一段都像学历/经验
+            if any(k in name for k in ["专", "技", "科", "士", "中", "高", "年", "限"]):
+                return False
+    return True
+
+
+@app.get("/api/companies/preview")
+async def api_companies_preview(
+    company: Optional[str] = "",
+    company_id: Optional[str] = "",
+    keyword: Optional[str] = "",
+    city: Optional[str] = "",
+    mode: Optional[str] = "fast",
+):
+    """智能投递预览：搜索 → 按公司分组 → 每家公司从搜索结果里提取 HR → pick_top_hr。
+    返回所有公司列表，每家带 top_hr + 岗位列表 + 推荐投递的 job_url。
+    """
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动，请先到设置Tab点击「启动浏览器」")
+
+    if not keyword and not company:
+        raise HTTPException(status_code=400, detail="keyword 或 company 至少给一个")
+
+    # 1) 搜索
+    city_code = CITY_MAP.get(city or get_setting("default_city", "全国"), "100010000")
+    try:
+        jobs = await _run_pw(automation.search, keyword or company, city_code)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
+    if not jobs:
+        return {"ok": False, "message": f"未找到任何 '{keyword or company}' 岗位", "companies": []}
+
+    # 2) 写库 + 按公司分组（每家保留完整岗位信息）
+    from collections import defaultdict
+    from boss_automation import pick_top_hr, _hr_title_score
+
+    groups: dict = defaultdict(list)  # key=(company, company_id) → [job_dict, ...]
+    for j in jobs:
+        j["url"] = _normalize_job_url(j.get("url", ""))
+        if not j.get("url"):
+            continue
+        existing = get_application_by_url(j["url"])
+        if existing:
+            update_application_from_job(existing["id"], j)
+            rec = existing
+        else:
+            aid = add_application(j)
+            rec = get_application(aid) if aid else j
+        comp = (rec.get("company") or j.get("company") or "").strip()
+        cid = (rec.get("company_id") or j.get("company_id") or "").strip()
+        if not comp or not _is_valid_company(comp):
+            continue
+        key = (comp, cid) if cid else (comp, "")
+        groups[key].append(
+            {
+                "title": rec.get("job_title") or j.get("title") or "",
+                "salary": rec.get("salary") or j.get("salary") or "",
+                "url": rec.get("job_url") or j.get("url") or "",
+                "hr_name": rec.get("hr_name") or j.get("hr_name") or "",
+                "hr_title": rec.get("hr_title") or j.get("hr_title") or "",
+                "city": rec.get("city") or j.get("city") or "",
+            }
+        )
+
+    # 3) 每家公司：聚合 HR → pick_top_hr → 推荐投递岗位
+    companies_result = []
+    for (comp, cid), comp_jobs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        # 从搜索结果提取 HR
+        hrs_seen = {}
+        for cj in comp_jobs:
+            hr_n = (cj.get("hr_name") or "").strip()
+            hr_t = (cj.get("hr_title") or "").strip()
+            if hr_n and hr_n not in hrs_seen:
+                hrs_seen[hr_n] = {"name": hr_n, "title": hr_t, "priority": _hr_title_score(hr_t)}
+            elif hr_n and hr_t:
+                old_score = hrs_seen[hr_n]["priority"]
+                new_score = _hr_title_score(hr_t)
+                if new_score > old_score:
+                    hrs_seen[hr_n]["title"] = hr_t
+                    hrs_seen[hr_n]["priority"] = new_score
+
+        hrs_list = sorted(hrs_seen.values(), key=lambda h: -h["priority"])
+        top_hr = pick_top_hr(hrs_list)
+
+        # 推荐投递的岗位：优先 top_hr 负责的，否则第一个有 url 的
+        target_job = None
+        if top_hr:
+            target_job = next((cj for cj in comp_jobs if cj.get("hr_name") == top_hr["name"] and cj.get("url")), None)
+        if not target_job:
+            target_job = next((cj for cj in comp_jobs if cj.get("url")), None)
+
+        already_applied = company_already_applied(company=comp, company_id=cid)
+
+        companies_result.append(
+            {
+                "company": comp,
+                "company_id": cid,
+                "position_count": len(comp_jobs),
+                "top_hr": top_hr,
+                "hrs": hrs_list,
+                "target_job": target_job,
+                "already_applied": already_applied,
+                "jobs": comp_jobs,
+            }
+        )
+
+    # 4) 深度模式：打开公司页拿 HR（仅 top5 或 all）
+    if mode in ("top5", "all"):
+        limit_deep = 5 if mode == "top5" else len(companies_result)
+        for i, cr in enumerate(companies_result[:limit_deep]):
+            cid_val = cr.get("company_id") or ""
+            # 从 comp_jobs 里找一个有 url 的
+            anchor = next((j.get("url") for j in cr.get("jobs", []) if j.get("url")), "")
+            if not anchor:
+                continue
+            try:
+                resolved_cid = await _run_pw(automation.goto_company_similar_jobs, anchor)
+                parsed = await _run_pw(automation.parse_company_similar_jobs_page)
+                page_jobs = parsed.get("jobs") or []
+                open_count = parsed.get("open_count") or 0
+                # 法人信息只在 intro 页 (/gongsi/<id>.html)，需单独导航抓取
+                legal_rep = ""
+                rep_cid = resolved_cid or cid_val
+                if rep_cid:
+                    try:
+                        legal_rep = await _run_pw(automation.fetch_company_legal_rep, rep_cid)
+                    except Exception:
+                        legal_rep = ""
+                hrs_agg = await _run_pw(automation.aggregate_company_hrs, page_jobs)
+                from boss_automation import pick_top_hr as _pick
+
+                deep_top = _pick(hrs_agg, legal_rep)
+                cr["top_hr"] = deep_top
+                cr["hrs"] = hrs_agg
+                cr["open_count"] = open_count
+                cr["legal_rep"] = legal_rep
+                cr["deep_analyzed"] = True
+                # 更新 target_job：优先 top_hr 关联
+                if deep_top and page_jobs:
+                    tj = next((pj for pj in page_jobs if pj.get("hr_name") == deep_top["name"] and pj.get("url")), None)
+                    if tj:
+                        cr["target_job"] = tj
+            except Exception as e:
+                cr["deep_error"] = str(e)
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "keyword": keyword or company,
+        "city": city or get_setting("default_city", "全国"),
+        "total_jobs": len(jobs),
+        "total_companies": len(companies_result),
+        "companies": companies_result,
+    }
+
+
+@app.post("/api/companies/smart-send")
+async def api_companies_smart_send(req: SmartSendRequest):
+    """批量智能投递：对 targets 列表里的每家公司投递到其 top_hr 的岗位。
+    req.targets: [{company, job_url, hr_name, hr_title}]
+    req.confirm 必须为 true。
+    """
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动")
+    if not req.confirm:
+        return {"success": False, "message": "需要 confirm=true 才执行"}
+
+    targets = req.targets or []
+    if not targets:
+        # 兼容旧的单条模式
+        if req.job_url:
+            targets = [
+                {
+                    "company": req.company or "",
+                    "job_url": req.job_url,
+                    "hr_name": req.hr_name or (req.top_hr or {}).get("name", ""),
+                    "hr_title": (req.top_hr or {}).get("title", ""),
+                }
+            ]
+        else:
+            raise HTTPException(status_code=400, detail="缺少 targets 或 job_url")
+
+    daily_limit = int(get_setting("daily_apply_limit", "15"))
+    results = []
+    applied_count = 0
+    skipped_count = 0
+
+    for t in targets:
+        if get_today_application_count() >= daily_limit:
+            results.append({"company": t.get("company"), "status": "skipped", "reason": "日投递上限"})
+            skipped_count += 1
+            continue
+
+        job_url = (t.get("job_url") or "").strip()
+        if not job_url:
+            results.append({"company": t.get("company"), "status": "skipped", "reason": "无 job_url"})
+            skipped_count += 1
+            continue
+
+        hr_name = (t.get("hr_name") or "").strip()
+        company_name = (t.get("company") or "").strip()
+        job_record = get_application_by_url(job_url) or {}
+        job_title = job_record.get("job_title") or "该岗位"
+        job_desc = job_record.get("description") or ""
+        is_boss = bool(t.get("is_boss") or job_record.get("is_boss"))
+        style = get_setting("ai_reply_style", "professional")
+        resume = get_setting("resume_summary", "")
+
+        # AI 个性化招呼语（失败自动回退模板），在 PW 线程外生成（纯 HTTP 调用）
+        greeting = await asyncio.to_thread(
+            generate_greeting_ai,
+            job_title,
+            company_name,
+            hr_name,
+            job_desc,
+            is_boss,
+            style,
+            resume,
+        )
+
+        try:
+            result = await _run_pw(automation.apply_to_job, job_url, greeting)
+            if result.get("success"):
+                applied_count += 1
+                results.append(
+                    {
+                        "company": company_name,
+                        "job_title": job_title,
+                        "hr_name": hr_name,
+                        "status": "success",
+                        "application_id": result.get("application_id"),
+                        "already_applied": result.get("already_applied", False),
+                    }
+                )
+            else:
+                results.append(
+                    {"company": company_name, "status": "failed", "reason": result.get("message", "投递失败")}
+                )
+        except Exception as e:
+            results.append({"company": company_name, "status": "failed", "reason": str(e)})
+
+    # 广播 WS：让前端的投递漏斗/统计/会话列表实时刷新（与普通批量投递一致）
+    await broadcast_ws(
+        {
+            "type": "batch_complete",
+            "total": len(targets),
+            "success": applied_count,
+        }
+    )
+
+    return {
+        "success": applied_count > 0,
+        "applied": applied_count,
+        "skipped": skipped_count,
+        "total": len(targets),
+        "message": f"批量投递完成：{applied_count} 成功 / {skipped_count} 跳过 / {len(targets)} 总计",
+        "results": results,
+    }
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: int):
     job = get_application(job_id)
@@ -707,8 +1045,11 @@ async def apply_to_job(req: ApplyRequest):
         job = get_application_by_url(req.job_url)
         title = job["job_title"] if job else "相关岗位"
         company = job["company"] if job else "贵公司"
+        job_desc = (job or {}).get("description", "") if job else ""
+        is_boss = bool((job or {}).get("is_boss")) if job else False
         style = get_setting("ai_reply_style", "professional")
-        greeting = generate_greeting(title, company, style=style)
+        resume = get_setting("resume_summary", "")
+        greeting = await asyncio.to_thread(generate_greeting_ai, title, company, "", job_desc, is_boss, style, resume)
 
     # 在后台线程运行（Playwright 是同步的）
     result = await _run_pw(automation.apply_to_job, req.job_url, greeting)
@@ -1185,6 +1526,13 @@ async def chat_monitor_loop():
 
             if not automation:
                 continue
+
+            # 风控冷却期：跳过本轮高风险操作（聊天监控会发消息）
+            try:
+                if automation.in_cooldown():
+                    continue
+            except Exception:
+                pass
 
             # 每轮轻量检查登录态（不导航，不触发BOSS反爬）
             _heartbeat_count += 1

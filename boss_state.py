@@ -31,6 +31,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_title TEXT NOT NULL,
             company TEXT,
+            company_id TEXT,
             salary TEXT,
             job_url TEXT UNIQUE NOT NULL,
             city TEXT,
@@ -115,6 +116,26 @@ def init_db():
         db.execute("ALTER TABLE conversations ADD COLUMN phone_shared INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN company_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_applications_company_id ON applications(company_id)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_applications_company ON applications(company)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN legal_rep TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN is_boss INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     # 候选池表
     db.executescript("""
         CREATE TABLE IF NOT EXISTS shortlists (
@@ -132,13 +153,15 @@ def init_db():
     defaults = {
         "greeting_template": "您好！看到贵司在招{job_title}，很感兴趣。PS：正在和你聊天的这个AI工具是我自己开发的——就当是我的技术名片了",
         "greeting_enabled": "true",
+        "ai_greeting_enabled": "true",
         "ai_reply_style": "professional",
         "daily_apply_limit": "15",
         "auto_reply_enabled": "false",
-        "min_reply_delay_sec": "15",
-        "max_reply_delay_sec": "20",
-        "batch_delay_min_sec": "30",
-        "batch_delay_max_sec": "90",
+        "min_reply_delay_sec": "20",
+        "max_reply_delay_sec": "40",
+        "batch_delay_min_sec": "45",
+        "batch_delay_max_sec": "120",
+        "batch_rest_every": "8",
         "resume_summary": "",
         "wechat_id": "",
         "search_keywords": "AI Agent,大模型开发,AI产品经理,RAG开发,大模型应用",
@@ -166,11 +189,12 @@ def add_application(job: dict) -> int:
     db = get_db()
     cur = db.execute(
         """INSERT OR IGNORE INTO applications
-           (job_title, company, salary, job_url, city, experience, education, hr_name, hr_title, description)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (job_title, company, company_id, salary, job_url, city, experience, education, hr_name, hr_title, description, legal_rep, is_boss)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job.get("title", ""),
             job.get("company", ""),
+            job.get("company_id", ""),
             job.get("salary", ""),
             job.get("url", ""),
             job.get("city", ""),
@@ -179,6 +203,8 @@ def add_application(job: dict) -> int:
             job.get("hr_name", ""),
             job.get("hr_title", ""),
             job.get("description", ""),
+            job.get("legal_rep", ""),
+            1 if job.get("is_boss") else 0,
         ),
     )
     db.commit()
@@ -198,6 +224,7 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
     fields = {
         "job_title": job.get("title", ""),
         "company": job.get("company", ""),
+        "company_id": job.get("company_id", ""),
         "salary": job.get("salary", ""),
         "city": job.get("city", ""),
         "experience": job.get("experience", ""),
@@ -292,6 +319,63 @@ def get_pending_applications(limit: int = 50) -> List[dict]:
         )
         .fetchall()
     )
+
+
+def list_jobs_by_company(company_id: str = "", company: str = "") -> List[dict]:
+    """按 company_id 或 company 名返回该公司下所有已入库的岗位。
+    优先用 company_id；为空时用 company 名兜底。"""
+    db = get_db()
+    if company_id:
+        rows = db.execute(
+            "SELECT * FROM applications WHERE company_id=? ORDER BY id DESC",
+            (company_id,),
+        ).fetchall()
+        if rows:
+            return _rows_to_list(rows)
+    if company:
+        return _rows_to_list(
+            db.execute(
+                "SELECT * FROM applications WHERE company=? ORDER BY id DESC",
+                (company,),
+            ).fetchall()
+        )
+    return []
+
+
+def list_companies_by_position_count(min_count: int = 1, limit: int = 50) -> List[dict]:
+    """按公司聚合，统计 distinct job_url 数倒序，返回 [{company, company_id, position_count, latest_job_id}]。
+    company_id 为空的公司会被单独归到 (company, '')。"""
+    db = get_db()
+    rows = db.execute(
+        """SELECT company, company_id, COUNT(DISTINCT job_url) AS position_count, MAX(id) AS latest_job_id
+           FROM applications
+           WHERE company != '' AND job_url != ''
+           GROUP BY company, COALESCE(NULLIF(company_id, ''), company)
+           HAVING position_count >= ?
+           ORDER BY position_count DESC, latest_job_id DESC
+           LIMIT ?""",
+        (min_count, limit),
+    ).fetchall()
+    return _rows_to_list(rows)
+
+
+def company_already_applied(company: str = "", company_id: str = "") -> bool:
+    """该公司下是否已经有 status in (applied, replied) 的记录。"""
+    db = get_db()
+    if company_id:
+        row = db.execute(
+            "SELECT 1 FROM applications WHERE company_id=? AND status IN ('applied','replied') LIMIT 1",
+            (company_id,),
+        ).fetchone()
+        if row:
+            return True
+    if company:
+        row = db.execute(
+            "SELECT 1 FROM applications WHERE company=? AND status IN ('applied','replied') LIMIT 1",
+            (company,),
+        ).fetchone()
+        return bool(row)
+    return False
 
 
 # ══════════════════════════════════════

@@ -8,6 +8,7 @@ import random
 import re
 import time
 from typing import Optional, List, Dict, Any
+from urllib.parse import urljoin
 
 from playwright.sync_api import Locator
 
@@ -110,6 +111,20 @@ SELECTORS = {
         'button:has-text("返回")',
         'a[href*="/chat"]',
     ],
+    "company_similar_jobs_link": [
+        'a[href*="/gongsi/job/"]',
+        'a:has-text("查看该公司其他职位")',
+        'a:has-text("查看该公司")',
+        'a:has-text("全部职位")',
+        '.company-info a[href*="gongsi"]',
+    ],
+    "company_job_cards": [
+        ".job-card",
+        ".job-primary",
+        "li.job-primary",
+        '[class*="job-card"]',
+        '[class*="job-primary"]',
+    ],
 }
 
 
@@ -135,6 +150,216 @@ _merge_selectors()
 MAX_APPLY_PER_DAY = 30
 MAX_AUTO_REPLY_PER_DAY = 200
 
+# ── HR 头衔优先级（数字越大越"高"，用于 pick_top_hr）──
+HR_TITLE_PRIORITY = [
+    ("招聘经理", 100),
+    ("HR经理", 95),
+    ("HRBP", 90),
+    ("HR负责人", 85),
+    ("招聘主管", 80),
+    ("招聘负责人", 75),
+    ("HR主管", 70),
+    ("招聘官", 60),
+    ("HR", 50),
+    ("人事", 40),
+    ("招聘专员", 30),
+    ("HR助理", 20),
+    ("猎头", 10),
+]
+
+
+def _hr_title_score(title: str) -> int:
+    """根据 HR 头衔文本返回优先级分；命中多条取最高。"""
+    if not title:
+        return 0
+    t = title.strip()
+    for kw, score in HR_TITLE_PRIORITY:
+        if kw in t:
+            return score
+    return 0
+
+
+# ── 法人 / 老板识别 ──
+# 中国最常见姓氏：同姓巧合概率高，作为弱信号降权。
+COMMON_SURNAMES = set(
+    "王李张刘陈杨黄赵周吴徐孙朱马胡郭林何高梁郑罗宋谢唐韩曹许邓萧冯曾程蔡彭潘"
+    "袁于董余苏叶吕魏蒋田杜丁沈姜范江傅钟卢汪戴崔任陆廖姚方金邱夏谭韦贾邹石熊"
+    "孟秦阎薛侯雷白龙段郝孔邵史毛常万顾赖武康贺严尹钱施牛洪龚汤陶黎温莫易樊乔"
+)
+
+# 复姓：同姓基本可锁定，作为强信号。
+COMPOUND_SURNAMES = [
+    "欧阳",
+    "太史",
+    "端木",
+    "上官",
+    "司马",
+    "东方",
+    "独孤",
+    "南宫",
+    "万俟",
+    "闻人",
+    "夏侯",
+    "诸葛",
+    "尉迟",
+    "公羊",
+    "赫连",
+    "澹台",
+    "皇甫",
+    "宗政",
+    "濮阳",
+    "公冶",
+    "太叔",
+    "申屠",
+    "公孙",
+    "慕容",
+    "仲孙",
+    "钟离",
+    "长孙",
+    "宇文",
+    "司徒",
+    "鲜于",
+    "司空",
+    "闾丘",
+    "子车",
+    "亓官",
+    "司寇",
+    "巫马",
+    "公西",
+    "颛孙",
+    "乐正",
+    "宰父",
+    "谷梁",
+    "拓跋",
+    "夹谷",
+    "轩辕",
+    "令狐",
+    "段干",
+    "百里",
+    "呼延",
+    "东郭",
+    "南门",
+    "羊舌",
+    "微生",
+    "梁丘",
+    "左丘",
+    "西门",
+    "东里",
+    "仲长",
+    "即墨",
+    "达奚",
+]
+
+
+_LEGAL_REP_NOISE = ("变更", "信息", "登记", "为", "是", "持股", "对外", "及")
+
+
+def _extract_legal_rep(body_text: str, lines: Optional[List[str]] = None) -> str:
+    """从公司页纯文本里抽取「法定代表人」姓名。
+
+    常见格式：
+        法定代表人：张三 / 法定代表人  张三 / 法定代表人\\n张三
+    抽不到返回空字符串。
+    """
+    if not body_text:
+        return ""
+    # 同行 / 紧邻：法定代表人[: ：空白换行]姓名
+    m = re.search(r"法定代表人[\s：:]*([\u4e00-\u9fa5·•・]{2,8})", body_text)
+    if m:
+        name = m.group(1).strip("·•・ ")
+        if name and not any(n in name for n in _LEGAL_REP_NOISE):
+            return name
+    # 兜底：按行找「法定代表人」标签，取下一行非空文本
+    rows = lines or []
+    for i, ln in enumerate(rows):
+        if "法定代表人" in ln and i + 1 < len(rows):
+            cand = rows[i + 1].strip("·•・ ")
+            if re.fullmatch(r"[\u4e00-\u9fa5·•・]{2,8}", cand) and not any(n in cand for n in _LEGAL_REP_NOISE):
+                return cand
+    return ""
+
+
+def _extract_surname(name: str) -> str:
+    """提取姓氏：先匹配复姓，否则取首字。空字符串返回空。"""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    for cs in COMPOUND_SURNAMES:
+        if name.startswith(cs):
+            return cs
+    return name[0]
+
+
+def detect_boss(hr_name: str, legal_rep: str) -> Dict[str, Any]:
+    """根据招聘者姓名与公司法人姓名，判断招聘者是否疑似老板/法人本人。
+
+    返回 {is_boss, confidence, reason, score_bonus}：
+      - 全名完全一致      → high   （几乎肯定本人）
+      - 同姓 + 复姓/罕见姓 → medium （巧合概率低）
+      - 同姓 + 常见姓      → low    （仅供参考）
+      - 缺数据 / 不同姓    → none
+    score_bonus 用于在 pick_top_hr 里加权（数值越大越优先）。
+    """
+    hr_name = (hr_name or "").strip()
+    legal_rep = (legal_rep or "").strip()
+    none = {"is_boss": False, "confidence": "none", "reason": "", "score_bonus": 0}
+    if not hr_name or not legal_rep:
+        return none
+
+    if hr_name == legal_rep:
+        return {
+            "is_boss": True,
+            "confidence": "high",
+            "reason": f"招聘者姓名与法人「{legal_rep}」完全一致",
+            "score_bonus": 1000,
+        }
+
+    hr_surname = _extract_surname(hr_name)
+    rep_surname = _extract_surname(legal_rep)
+    if not hr_surname or hr_surname != rep_surname:
+        return none
+
+    if hr_surname in COMPOUND_SURNAMES or hr_surname not in COMMON_SURNAMES:
+        return {
+            "is_boss": True,
+            "confidence": "medium",
+            "reason": f"与法人同为「{hr_surname}」姓（复姓/罕见姓，巧合概率低）",
+            "score_bonus": 300,
+        }
+
+    return {
+        "is_boss": True,
+        "confidence": "low",
+        "reason": f"与法人同为「{hr_surname}」姓（常见姓，仅供参考）",
+        "score_bonus": 50,
+    }
+
+
+def pick_top_hr(hrs: List[Dict[str, Any]], legal_rep: str = "") -> Optional[Dict[str, Any]]:
+    """从 HR 列表中挑出职务最高的一个。
+    同分时按输入顺序（保持稳定）。输入为空返回 None。
+    每条 hr 至少包含 name / title 字段。
+
+    传入 legal_rep（公司法人姓名）时，疑似老板的 HR 会被加权优先选出，
+    并在返回的 hr dict 上附加 is_boss / boss_confidence / boss_reason 字段。
+    """
+    if not hrs:
+        return None
+    best = None
+    best_score = -1
+    for hr in hrs:
+        title_score = _hr_title_score(hr.get("title") or "")
+        boss = detect_boss(hr.get("name") or "", legal_rep)
+        if legal_rep:
+            hr["is_boss"] = boss["is_boss"]
+            hr["boss_confidence"] = boss["confidence"]
+            hr["boss_reason"] = boss["reason"]
+        total = title_score + boss["score_bonus"]
+        if total > best_score:
+            best_score = total
+            best = hr
+    return best
+
 
 class BossAutomation(BossScraper):
     """在 BossScraper 基础上增加交互能力"""
@@ -142,6 +367,10 @@ class BossAutomation(BossScraper):
     def __init__(self, headless=False):
         super().__init__(headless)
         init_db()
+        # 风控冷却状态：检测到频率限制时设置 _cooldown_until，期间暂停高风险操作
+        self._cooldown_until = 0.0
+        self._risk_strikes = 0  # 连续命中风控信号次数，越高退避越久
+        self._last_action_ts = 0.0  # 上一次高风险动作（投递/发消息）时间戳
 
     # ══════════════════════════════════════
     #  底层交互 helpers
@@ -206,28 +435,86 @@ class BossAutomation(BossScraper):
     #  安全检查
     # ══════════════════════════════════════
 
-    def check_page_safety(self) -> bool:
-        """所有自动化操作前检查页面安全状态。"""
+    def inspect_page_safety(self) -> Dict[str, Any]:
+        """检查页面安全状态，返回结构化结果。
+
+        返回 {ok, reason, category, backoff}：
+          - category: ok / login / captcha / banned / rate_limit / error
+          - backoff: 建议退避秒数（rate_limit 时随 _risk_strikes 递增）
+        同时维护 self._risk_strikes / self._cooldown_until。
+        """
         try:
-            url = self.page.url
             body = self.page.inner_text("body")
             body_lower = body.lower()
-
-            if self._login_prompt_visible():
-                print("  ⚠️ 安全检查: 需要重新登录")
-                return False
-            if any(kw in body_lower[:500] for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
-                print("  ⚠️ 安全检查: 检测到验证码")
-                return False
-            if any(kw in body_lower[:500] for kw in ["账号异常", "违规", "限制使用", "冻结"]):
-                print("  ⚠️ 安全检查: 账号异常")
-                return False
-            if any(kw in body_lower[:500] for kw in ["操作太频繁", "稍后再试", "休息一下"]):
-                print("  ⚠️ 安全检查: 操作频率限制")
-                return False
-            return True
         except Exception:
-            return True
+            return {"ok": True, "reason": "", "category": "error", "backoff": 0}
+
+        if self._login_prompt_visible():
+            return {"ok": False, "reason": "需要重新登录", "category": "login", "backoff": 0}
+
+        head = body_lower[:600]
+        if any(kw in head for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
+            self._trigger_cooldown(category="captcha")
+            return {"ok": False, "reason": "检测到验证码", "category": "captcha", "backoff": self._cooldown_remaining()}
+        if any(kw in head for kw in ["账号异常", "违规", "限制使用", "冻结"]):
+            self._trigger_cooldown(category="banned")
+            return {"ok": False, "reason": "账号异常", "category": "banned", "backoff": self._cooldown_remaining()}
+        if any(kw in head for kw in ["操作太频繁", "稍后再试", "休息一下", "访问过于频繁", "请求过于频繁"]):
+            self._trigger_cooldown(category="rate_limit")
+            return {
+                "ok": False,
+                "reason": "操作频率限制",
+                "category": "rate_limit",
+                "backoff": self._cooldown_remaining(),
+            }
+
+        # 正常页面：风控信号清零
+        self._risk_strikes = 0
+        return {"ok": True, "reason": "", "category": "ok", "backoff": 0}
+
+    def check_page_safety(self) -> bool:
+        """所有自动化操作前检查页面安全状态。布尔版（向后兼容）。"""
+        status = self.inspect_page_safety()
+        if not status["ok"]:
+            print(f"  ⚠️ 安全检查: {status['reason']}")
+        return status["ok"]
+
+    # ── 风控冷却退避 ──
+    def _trigger_cooldown(self, category: str = "rate_limit") -> None:
+        """命中风控信号时拉长冷却时间。指数退避：60s → 120s → 240s …，封顶 30 分钟。"""
+        self._risk_strikes = min(self._risk_strikes + 1, 6)
+        if category == "banned":
+            base = 1800  # 账号异常：直接冷却 30 分钟
+        elif category == "captcha":
+            base = 300  # 验证码：5 分钟起
+        else:
+            base = 60 * (2 ** (self._risk_strikes - 1))  # 频率限制：指数退避
+        wait = min(base, 1800)
+        self._cooldown_until = max(self._cooldown_until, time.time() + wait)
+        print(f"  🧊 风控冷却 {wait:.0f}s（strikes={self._risk_strikes}, 原因={category}）")
+
+    def _cooldown_remaining(self) -> float:
+        return max(0.0, self._cooldown_until - time.time())
+
+    def in_cooldown(self) -> bool:
+        return self._cooldown_remaining() > 0
+
+    def _respect_cooldown(self) -> bool:
+        """高风险动作前调用：若处于冷却期返回 False（应跳过本次动作）。"""
+        remaining = self._cooldown_remaining()
+        if remaining > 0:
+            print(f"  ⏸️ 处于风控冷却期，剩余 {remaining:.0f}s，跳过本次操作")
+            return False
+        return True
+
+    def _human_pace(self, min_gap: float = 3.0, max_gap: float = 8.0) -> None:
+        """两次高风险动作之间保证最小人性化间隔，避免节奏过于机械。"""
+        now = time.time()
+        elapsed = now - self._last_action_ts
+        target = random.uniform(min_gap, max_gap)
+        if 0 < elapsed < target:
+            time.sleep(target - elapsed)
+        self._last_action_ts = time.time()
 
     # ══════════════════════════════════════
     #  Session 保活 & 心跳
@@ -303,14 +590,19 @@ class BossAutomation(BossScraper):
         if today_count >= min(daily_limit, MAX_APPLY_PER_DAY):
             return {"success": False, "message": f"已达今日上限({today_count}条)"}
 
+        # 风控冷却：处于退避期直接跳过，让上层稍后重试
+        if not self._respect_cooldown():
+            return {"success": False, "message": "风控冷却中", "cooldown": True}
+
         print(f"  🚀 投递: {job_url[:60]}...")
 
         try:
             self.page.goto(job_url, wait_until="load", timeout=45000)
-            pause(1, 2)
+            pause(2, 4)
 
-            if not self.check_page_safety():
-                return {"success": False, "message": "安全检查未通过"}
+            safety = self.inspect_page_safety()
+            if not safety["ok"]:
+                return {"success": False, "message": f"安全检查未通过: {safety['reason']}", "safety": safety}
 
             # 检查是否已投递
             if self._has_text("已沟通", "继续沟通"):
@@ -337,7 +629,8 @@ class BossAutomation(BossScraper):
 
             # 检查限制消息
             if self._has_text("已达上限", "沟通人数已用完", "今日次数已用完", "今日沟通次数已用完"):
-                return {"success": False, "message": "BOSS直聘今日沟通次数已用完"}
+                self._trigger_cooldown(category="rate_limit")
+                return {"success": False, "message": "BOSS直聘今日沟通次数已用完", "cooldown": True}
 
             # 等待聊天窗口加载
             chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=5000)
@@ -418,20 +711,52 @@ class BossAutomation(BossScraper):
             return {"success": False, "message": str(e)}
 
     def apply_batch(self, job_urls: List[str], greeting_template: Optional[str] = None) -> List[dict]:
-        """批量投递，带间隔延迟。可通过设置 batch_delay_sec 控制间隔。"""
+        """批量投递，带间隔延迟 + 风控退避。
+
+        - 普通间隔由 batch_delay_min/max_sec 控制（随机）
+        - 命中风控冷却时，等待冷却结束再继续，而不是直接放弃整批
+        - 每投递若干条插入一次更长的"喝水休息"，模拟真人节奏
+        """
         results = []
         min_delay = int(get_setting("batch_delay_min_sec", "30"))
         max_delay = int(get_setting("batch_delay_max_sec", "90"))
+        # 每投 N 条后来一次长休息（5-10分钟），打散机械节奏
+        rest_every = int(get_setting("batch_rest_every", "8"))
+        applied_since_rest = 0
+
         for i, url in enumerate(job_urls):
+            # 冷却期：等待结束（最多等一次冷却时长），避免硬撞风控
+            if self.in_cooldown():
+                wait = self._cooldown_remaining()
+                print(f"  🧊 批量投递遇冷却，等待 {wait:.0f}s 后继续...")
+                time.sleep(wait + random.uniform(2, 8))
+
             if i > 0:
                 delay = random.uniform(min_delay, max_delay)
                 print(f"  ⏳ 等待 {delay:.0f}s 后投递下一条...")
                 time.sleep(delay)
 
+            # 周期性长休息
+            if rest_every > 0 and applied_since_rest >= rest_every:
+                rest = random.uniform(300, 600)
+                print(f"  ☕ 已连续投递 {applied_since_rest} 条，休息 {rest:.0f}s 降低风控风险...")
+                time.sleep(rest)
+                applied_since_rest = 0
+
             result = self.apply_to_job(url, greeting_template)
             results.append(result)
 
+            if result.get("success"):
+                applied_since_rest += 1
+
+            # 命中"今日上限"：整批停止
             if not result["success"] and "上限" in result.get("message", ""):
+                print("  ⛔ 触达今日投递上限，停止本批")
+                break
+            # 账号异常等强风控：立即停止，交由上层人工处理
+            safety = result.get("safety") or {}
+            if safety.get("category") in ("banned", "captcha"):
+                print(f"  ⛔ 触发强风控({safety.get('category')})，停止本批等待人工处理")
                 break
         return results
 
@@ -1001,6 +1326,278 @@ class BossAutomation(BossScraper):
         print(f"  [扫描] 从当前页面提取到 {len(jobs)} 个岗位")
         return jobs
 
+    # ══════════════════════════════════════
+    #  公司画像（用于 smart-send：先看公司再投递）
+    # ══════════════════════════════════════
+
+    def goto_company_similar_jobs(self, job_url: str) -> str:
+        """从岗位详情页找到"查看该公司其他职位"链接并跳过去，返回 companyId。
+        找不到链接抛 RuntimeError。"""
+        if not job_url:
+            raise RuntimeError("缺少岗位URL")
+        try:
+            self.page.goto(job_url, wait_until="load", timeout=45000)
+        except Exception as e:
+            raise RuntimeError(f"打开岗位详情页失败: {e}")
+        pause(1, 2)
+
+        href = None
+        for sel in SELECTORS["company_similar_jobs_link"]:
+            try:
+                loc = self.page.locator(sel).first
+                if loc.count() > 0 and loc.is_visible():
+                    href = loc.get_attribute("href")
+                    if href and "/gongsi/job/" in href:
+                        break
+            except Exception:
+                continue
+
+        # 回退：找不到 jobs 页链接时，用本岗位卡片关联的公司介绍页 /gongsi/<id>.html
+        if not href or "/gongsi/job/" not in (href or ""):
+            try:
+                cid = self.page.evaluate(
+                    r"""() => {
+                    // 优先取页面内指向公司主页的链接（排除推荐区）
+                    const a = document.querySelector('a[ka="company-name"][href*="/gongsi/"]')
+                        || document.querySelector('.company-info a[href*="/gongsi/"]')
+                        || document.querySelector('a[href*="/gongsi/"]:not([href$="/gongsi/"])');
+                    if (!a) return "";
+                    const m = (a.getAttribute('href') || '').match(/\/gongsi\/(?:job\/)?([0-9a-zA-Z]+~?)/);
+                    return m ? m[1] : "";
+                }"""
+                )
+                if cid:
+                    # 直接拼 jobs 页 URL 跳过去
+                    full_url = f"https://www.zhipin.com/gongsi/job/{cid}.html"
+                    self.page.goto(full_url, wait_until="load", timeout=45000)
+                    pause(2, 3)
+                    if not self.check_page_safety():
+                        raise RuntimeError("公司页安全检查未通过（可能被风控）")
+                    return cid
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
+
+        if not href:
+            raise RuntimeError("未找到 '查看该公司其他职位' 链接")
+
+        m = re.search(r"/gongsi/job/([0-9a-zA-Z]+~?)", href)
+        company_id = m.group(1) if m else ""
+        full_url = urljoin("https://www.zhipin.com", href.split("?")[0])
+        try:
+            self.page.goto(full_url, wait_until="load", timeout=45000)
+        except Exception as e:
+            raise RuntimeError(f"打开公司页失败: {e}")
+        pause(2, 3)
+        if not self.check_page_safety():
+            raise RuntimeError("公司页安全检查未通过（可能被风控）")
+        return company_id
+
+    def fetch_company_legal_rep(self, company_id: str) -> str:
+        """导航到公司介绍页 /gongsi/<id>.html，点开「工商信息」抓「法定代表人」。
+
+        注意：法人信息只在 intro 页 (/gongsi/<id>.html) 的工商信息区域，
+        而 jobs 页 (/gongsi/job/<id>.html) 没有。抓不到返回空字符串，不抛异常。
+        """
+        cid = (company_id or "").strip()
+        if not cid:
+            return ""
+        intro_url = f"https://www.zhipin.com/gongsi/{cid}.html"
+        try:
+            self.page.goto(intro_url, wait_until="load", timeout=45000)
+        except Exception:
+            return ""
+        pause(1, 2)
+        if not self.check_page_safety():
+            return ""
+
+        # 工商信息可能在折叠 tab 里，先尝试点开
+        for tab_text in ("工商信息", "公司介绍"):
+            try:
+                loc = self.page.locator(f"text={tab_text}").first
+                if loc.count() > 0 and loc.is_visible():
+                    loc.click(timeout=3000)
+                    pause(1, 2)
+                    break
+            except Exception:
+                continue
+
+        try:
+            body_text = self.page.inner_text("body")
+        except Exception:
+            return ""
+        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
+        return _extract_legal_rep(body_text, lines)
+
+    def parse_company_similar_jobs_page(self) -> dict:
+        """解析 /gongsi/job/<id>.html 页面。
+        返回 {open_count:int, jobs:[{title,salary,url,hr_block,hr_name,hr_title,company}], page_url:str, company:str}。
+
+        核心策略：用 page.inner_text('body') 拿纯文本 → 按行分块解析。
+        BOSS 公司页格式（每个岗位块）：
+            标题
+            薪资（5-8K）
+            经验（1-3年）
+            学历（大专）
+            HR名·头衔
+            城市·区·地标
+        用"薪资行"作为锚点，往上取标题，往下取 HR。
+        """
+        result = {"open_count": 0, "jobs": [], "page_url": self.page.url, "company": ""}
+
+        try:
+            body_text = self.page.inner_text("body")
+        except Exception as e:
+            print(f"  [公司页] inner_text 失败: {e}")
+            return result
+
+        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
+
+        # 1) open_count：从文本里匹配 "11在招职位" / "在招 11 个" / "招聘职位(11)"
+        for ln in lines[:30]:
+            m = re.search(r"(\d+)\s*在招\s*职位", ln)
+            if not m:
+                m = re.search(r"在招\s*(\d+)\s*个", ln)
+            if not m:
+                m = re.search(r"招聘职位\s*\(\s*(\d+)\s*\)", ln)
+            if not m:
+                m = re.search(r"(\d+)\s*个在招", ln)
+            if m:
+                result["open_count"] = int(m.group(1))
+                break
+
+        # 2) 公司名：从页面 title 或文本中拿
+        try:
+            page_title = self.page.title() or ""
+            # 格式："「淄博齐行家体育文...招聘」2026年..."  或 "XX公司招聘..."
+            company_name = re.sub(r"[「【]", "", page_title)
+            company_name = re.sub(r"招聘.*$", "", company_name)
+            company_name = re.sub(r"[」】]", "", company_name).strip()
+            if company_name:
+                result["company"] = company_name
+        except Exception:
+            pass
+
+        # 3) 解析岗位块。BOSS 公司页岗位块结构：
+        #    标题 / 经验(3-5年|经验不限) / 学历(本科|大专|硕士|学历不限) / HR名·头衔 / 城市·区·地标
+        #    注意：公司页岗位卡不一定显示薪资，所以用 HR 行作为锚点（最稳定），往上找标题。
+        salary_re = re.compile(r"^\d+[-~]\d+K|\d+-\d+元|^\d+元/[时月]", re.I)
+        exp_re = re.compile(r"^(?:\d+[-~]\d+年|\d+年以[上下]|经验不限|应届生?|在校生?|\d+年内)$")
+        edu_re = re.compile(r"^(?:初中及?以下|高中|中专|大专|本科|硕士|博士|学历不限|MBA|EMBA)$")
+        hr_re = re.compile(
+            r"^([\u4e00-\u9fa5]{2,4})\s*[·•・]\s*"
+            r"(HRBP|HR|猎头|顾问|招聘[\u4e00-\u9fa5]{0,3}|HR[\u4e00-\u9fa5]{0,3}|"
+            r"[\u4e00-\u9fa5]{0,4}(?:经理|主管|总监|负责人|助理|专员|人事))$"
+        )
+
+        # 先提取所有 job_detail 链接
+        try:
+            links = (
+                self.page.evaluate(r"""() => {
+                const r = []; const s = new Set();
+                document.querySelectorAll('a[href*="/job_detail/"]').forEach(a => {
+                    const h = a.href, t = (a.innerText || '').trim();
+                    if (h && t && !s.has(h) && t.length < 80) { s.add(h); r.push({href:h, title:t.substring(0,60)}); }
+                });
+                return r;
+            }""")
+                or []
+            )
+        except Exception:
+            links = []
+        link_map = {}
+        for lk in links:
+            key = (lk.get("title") or "")[:12]
+            if key:
+                link_map[key] = lk.get("href", "")
+
+        # 以 HR 行为锚点定位岗位块
+        jobs = []
+        seen_titles = set()
+        hr_indices = [i for i, ln in enumerate(lines) if hr_re.match(ln)]
+        for hi in hr_indices:
+            m = hr_re.match(lines[hi])
+            if not m:
+                continue
+            hr_name = m.group(1)
+            hr_title = m.group(2)
+            hr_block = lines[hi]
+
+            # 往上跳过 学历 / 经验 / 薪资 行，剩下的第一行即标题
+            ti = hi - 1
+            salary = ""
+            while ti >= 0 and (edu_re.match(lines[ti]) or exp_re.match(lines[ti]) or salary_re.match(lines[ti])):
+                if salary_re.match(lines[ti]) and not salary:
+                    salary = lines[ti]
+                ti -= 1
+            if ti < 0:
+                continue
+            title = lines[ti]
+            if not (2 < len(title) < 80):
+                continue
+            if title in seen_titles:
+                continue
+            # 过滤明显非岗位标题的导航/区块行
+            if any(bad in title for bad in ("招聘职位", "公司简介", "职位类型", "工作城市", "全部(")):
+                continue
+            seen_titles.add(title)
+
+            url = link_map.get(title[:12], "")
+            jobs.append(
+                {
+                    "title": title,
+                    "salary": salary,
+                    "url": url,
+                    "hr_block": hr_block,
+                    "hr_name": hr_name,
+                    "hr_title": hr_title,
+                    "company": result.get("company") or "",
+                }
+            )
+
+        result["jobs"] = jobs
+        return result
+
+    def aggregate_company_hrs(self, jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """从 parse_company_similar_jobs_page 返回的 jobs 列表里聚合去重 HR。
+        每条 hr: {name, title, priority, associated_jobs:[...]}。
+        同一 HR 出现在多个岗位时，职务取最高（按 _hr_title_score）。"""
+        hrs_map: Dict[str, Dict[str, Any]] = {}
+        hr_name_re = re.compile(
+            r"([\u4e00-\u9fa5]{2,4})\s*[·｜\|\s]\s*"
+            r"((?:HRBP|HR|猎头|顾问)|招聘[\u4e00-\u9fa5]{0,3}|"
+            r"HR[\u4e00-\u9fa5]{0,3}|"
+            r"[\u4e00-\u9fa5]{0,4}(?:经理|主管|总监|负责人|助理|专员|人事))"
+        )
+        for j in jobs or []:
+            block = (j.get("hr_block") or "").strip()
+            if not block:
+                continue
+            for m in hr_name_re.finditer(block):
+                name = m.group(1).strip()
+                title = m.group(2).strip()
+                if name not in hrs_map:
+                    hrs_map[name] = {
+                        "name": name,
+                        "title": title,
+                        "priority": _hr_title_score(title),
+                        "associated_jobs": [],
+                    }
+                else:
+                    cur_score = hrs_map[name]["priority"]
+                    new_score = _hr_title_score(title)
+                    if new_score > cur_score:
+                        hrs_map[name]["title"] = title
+                        hrs_map[name]["priority"] = new_score
+                if j.get("title") and j["title"] not in hrs_map[name]["associated_jobs"]:
+                    hrs_map[name]["associated_jobs"].append(j["title"])
+        hrs = list(hrs_map.values())
+        hrs.sort(key=lambda h: (-h["priority"], h["name"]))
+        for h in hrs:
+            h["is_top"] = bool(hrs) and h["name"] == hrs[0]["name"]
+        return hrs
+
     def scan_and_apply_current_page(self, greeting_template: Optional[str] = None) -> dict:
         """扫描当前页面全部岗位 → 一键批量投递。"""
         jobs = self.scan_current_page()
@@ -1298,6 +1895,10 @@ class BossAutomation(BossScraper):
                 if today_replies >= MAX_AUTO_REPLY_PER_DAY:
                     continue
 
+                # 风控冷却期：本轮不发消息
+                if not self._respect_cooldown():
+                    continue
+
                 try:
                     from boss_replier import generate_reply
 
@@ -1368,6 +1969,9 @@ class BossAutomation(BossScraper):
 
                         # 然后再发送AI回复
                         print(f"  [监控] AI回复: {reply[:60]}...")
+                        # 模拟真人"看到消息→思考→打字"的延迟，按回复长度浮动
+                        think = random.uniform(2, 5) + min(len(reply) * 0.05, 6)
+                        time.sleep(think)
                         if self.send_message(reply):
                             add_message(conv_id, "me", reply, ai_generated=True)
                             update_conversation_last_message(conv_id, reply, "me", 0)
