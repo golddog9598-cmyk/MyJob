@@ -1442,6 +1442,44 @@ async def resume_auto_reply(conv_id: int):
 
 
 # ══════════════════════════════════════
+#  地区 / 城市 / 区商圈（基于 BOSS 接口）
+# ══════════════════════════════════════
+
+
+@app.get("/api/geo/cities")
+def geo_cities(force: bool = False):
+    """BOSS 支持的招聘城市列表。"""
+    try:
+        from boss_geo import get_cities
+
+        return {"cities": get_cities(force=force)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取城市失败: {e}")
+
+
+@app.get("/api/geo/districts")
+def geo_districts(city: str, force: bool = False):
+    """某城市下的区/县级列表（multiBusinessDistrict 实际使用的 code）。
+
+    city: 城市名（如"广州"）或 city code（如"101280100"）
+    """
+    if not city:
+        raise HTTPException(status_code=400, detail="缺少 city 参数")
+    try:
+        from boss_geo import get_districts, resolve_city_code
+
+        city_code = resolve_city_code(city)
+        if not city_code:
+            raise HTTPException(status_code=404, detail=f"未找到城市: {city}")
+        districts = get_districts(city_code, force=force)
+        return {"city": city, "city_code": city_code, "districts": districts}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取区域失败: {e}")
+
+
+# ══════════════════════════════════════
 #  设置
 # ══════════════════════════════════════
 

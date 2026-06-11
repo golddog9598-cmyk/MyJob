@@ -1425,6 +1425,7 @@ td a:hover{color:var(--accent)}
             <button class="btn btn-success" onclick="batchSearch()">批量搜索</button>
             <button class="btn btn-primary" onclick="batchApplyAll(1)">一键投递</button>
             <button class="btn btn-ghost btn-sm" onclick="batchApplyAll(5)" title="多页扫描+跳过已发公司+跳过HR不活跃">翻5页 ▸</button>
+            <button class="btn btn-warning" id="btnSmartSend" onclick="openSmartSendModal()" title="按公司聚合+挑最高职级HR+批量投递">🎯 智能投递</button>
           </div>
         </div>
         <div class="search-row advanced">
@@ -1463,7 +1464,7 @@ td a:hover{color:var(--accent)}
             <option value="2">兼职</option>
           </select>
           <select id="searchScale" class="search-select">
-            <option value="">公司规模</option>
+            <option value="">公司规模(单选)</option>
             <option value="301">0-20人</option>
             <option value="302">20-99人</option>
             <option value="303">100-499人</option>
@@ -1471,6 +1472,19 @@ td a:hover{color:var(--accent)}
             <option value="305">1000-9999人</option>
             <option value="306">10000人以上</option>
           </select>
+          <select id="searchScaleMulti" class="search-select" multiple size="1" title="多选公司规模（按Ctrl/⌘多选）" style="min-width:160px;display:none;">
+            <option value="301">0-20人</option>
+            <option value="302">20-99人</option>
+            <option value="303">100-499人</option>
+            <option value="304">500-999人</option>
+            <option value="305">1000-9999人</option>
+            <option value="306">10000人以上</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="btnScaleMulti" onclick="toggleScaleMulti()">规模多选</button>
+          <select id="searchDistrict" class="search-select" multiple size="1" title="多选区域（按Ctrl/⌘多选）" style="min-width:160px;display:none;">
+            <option value="">加载中…</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="btnDistrictMulti" onclick="toggleDistrictMulti()">区域多选</button>
           <select id="searchStage" class="search-select">
             <option value="">融资阶段</option>
             <option value="801">未融资</option>
@@ -1778,6 +1792,56 @@ function manualHeartbeat(){
   }).catch(()=>{document.getElementById('sessionStatus').textContent='检测失败';toast('检测失败','error');});
 }
 
+// ── 多选过滤：区域/公司规模 ──
+function getMultiSelectValues(id){
+  const el=document.getElementById(id);
+  if(!el) return [];
+  return Array.from(el.selectedOptions||[]).map(o=>o.value).filter(v=>v);
+}
+function toggleScaleMulti(){
+  const a=document.getElementById('searchScale');
+  const b=document.getElementById('searchScaleMulti');
+  const btn=document.getElementById('btnScaleMulti');
+  const isMulti=b.style.display!=='none';
+  if(isMulti){
+    b.style.display='none'; a.style.display=''; btn.textContent='规模多选';
+  }else{
+    b.style.display=''; a.style.display='none'; btn.textContent='规模单选';
+  }
+}
+function toggleDistrictMulti(){
+  const el=document.getElementById('searchDistrict');
+  const btn=document.getElementById('btnDistrictMulti');
+  const isMulti=el.style.display!=='none';
+  if(isMulti){
+    el.style.display='none'; btn.textContent='区域多选';
+  }else{
+    el.style.display=''; btn.textContent='区域单选';
+    if(!el.dataset.loaded){loadDistricts();}
+  }
+}
+function loadDistricts(){
+  const sel=document.getElementById('searchDistrict');
+  const city=document.getElementById('searchCity').value;
+  sel.innerHTML='<option>加载中…</option>';
+  fetch('/api/geo/districts?city='+encodeURIComponent(city)).then(r=>r.json()).then(d=>{
+    if(d.detail){sel.innerHTML='<option>'+esc(d.detail)+'</option>';return;}
+    const list=(d.districts||[]);
+    if(!list.length){sel.innerHTML='<option>该城市暂无可选区</option>';return;}
+    sel.innerHTML=list.map(x=>'<option value="'+attr(x.code)+'">'+esc(x.name)+'</option>').join('');
+    sel.dataset.loaded='1';
+    sel.size=Math.min(8, Math.max(3, list.length));
+  }).catch(err=>{
+    sel.innerHTML='<option>加载失败</option>';
+    toast('区域加载失败: '+err.message,'error');
+  });
+}
+document.getElementById('searchCity').addEventListener('change',function(){
+  const el=document.getElementById('searchDistrict');
+  if(el) el.dataset.loaded='';
+});
+}
+
 function doSearch(){
   searchInFlight=true;
   document.getElementById('searchStatus').innerHTML='<div class="status-banner"><div class="spinner"></div> 搜索中...</div>';
@@ -1792,6 +1856,11 @@ function doSearch(){
     scale:document.getElementById('searchScale').value||undefined,
     stage:document.getElementById('searchStage').value||undefined,
   };
+  // 新增：多区/多规模过滤（与单值字段互斥）
+  const sizeMulti=getMultiSelectValues('searchScaleMulti');
+  if(sizeMulti && sizeMulti.length){body.company_size=sizeMulti;body.scale=undefined;}
+  const districtMulti=getMultiSelectValues('searchDistrict');
+  if(districtMulti && districtMulti.length){body.districts=districtMulti;}
   fetch('/api/jobs/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
     searchInFlight=false;
     if(d.detail){document.getElementById('searchStatus').innerHTML='<div class="status-banner" style="margin-top:8px;">'+esc(d.detail)+'</div>';toast(d.detail,'error');return;}
@@ -2202,5 +2271,211 @@ function onPlatformChange(){
   else{input.value='';input.placeholder='输入模型名...';}
 }
 </script>
+<!-- Smart Send Modal -->
+<div class="analyze-modal-overlay" id="smartSendModal" style="display:none;">
+  <div class="modal-box" style="max-width:800px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-shrink:0;">
+      <h3>🎯 智能投递 — 按公司分组 · 每家挑最高 HR · 批量投递</h3>
+      <button onclick="closeSmartSendModal()" style="background:none;border:none;color:var(--text-2);font-size:20px;cursor:pointer;">&times;</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-shrink:0;flex-wrap:wrap;">
+      <input type="text" id="ssKeyword" placeholder="关键词" style="flex:1;min-width:120px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);font-size:13px;">
+      <select id="ssCity" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);font-size:13px;">
+        <option value="">默认</option><option>北京</option><option>上海</option><option>广州</option><option>深圳</option><option>杭州</option><option>成都</option><option>济南</option><option>青岛</option><option>淄博</option><option>全国</option>
+      </select>
+      <button class="btn btn-primary" onclick="doSmartSendPreview()" id="ssPreviewBtn">预览</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap;">
+      <span style="font-size:11px;color:var(--text-3);">分析模式：</span>
+      <label class="ss-mode-pill"><input type="radio" name="ssMode" value="fast" checked><span>\u26A1 快速</span></label>
+      <label class="ss-mode-pill"><input type="radio" name="ssMode" value="top5"><span>\uD83D\uDD0D Top5 深度</span></label>
+      <label class="ss-mode-pill"><input type="radio" name="ssMode" value="all"><span>\uD83D\uDC22 全部深度</span></label>
+      <span id="ssModeHint" style="font-size:10px;color:var(--text-3);margin-left:4px;">快速：仅搜索结果，无 HR 信息</span>
+    </div>
+    <div id="ssStatus" style="font-size:12px;color:var(--text-3);margin-bottom:8px;flex-shrink:0;min-height:18px;"></div>
+    <div id="ssBody" style="flex:1;overflow-y:auto;min-height:0;">
+      <div class="empty" style="text-align:center;padding:30px 0;color:var(--text-3);">点击「预览全部公司」搜索并分析</div>
+    </div>
+    <div id="ssFooter" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);gap:8px;align-items:center;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeSmartSendModal()">取消</button>
+      <button class="btn btn-warning" id="ssConfirmBtn" onclick="doSmartSendConfirm()">🎯 批量投递</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _ssPreview=null;
+function openSmartSendModal(){
+  document.getElementById('ssKeyword').value=document.getElementById('searchKeyword').value||'';
+  document.getElementById('ssCity').value=document.getElementById('searchCity').value||'';
+  document.getElementById('ssStatus').textContent='';
+  document.getElementById('ssBody').innerHTML='<div class="empty" style="text-align:center;padding:30px 0;color:var(--text-3);">点击「预览全部公司」搜索并分析</div>';
+  document.getElementById('ssFooter').style.display='none';
+  document.getElementById('smartSendModal').style.display='flex';
+  _ssPreview=null;
+}
+function closeSmartSendModal(){document.getElementById('smartSendModal').style.display='none';_ssPreview=null;}
+function ssMode(){const el=document.querySelector('input[name="ssMode"]:checked');return el?el.value:'fast';}
+
+document.addEventListener('change',function(e){
+  if(e.target&&e.target.name==='ssMode'){
+    const hints={fast:'快速：仅搜索结果，无 HR 信息（最快）',top5:'Top5 深度：打开岗位数最多的 5 家公司页解析 HR（约 20 秒）',all:'全部深度：逐个打开所有公司页（慢 2-3 分钟，可能触发风控）'};
+    const h=document.getElementById('ssModeHint');if(h)h.textContent=hints[ssMode()]||'';
+  }
+});
+
+async function doSmartSendPreview(){
+  const btn=document.getElementById('ssPreviewBtn');
+  const kw=document.getElementById('ssKeyword').value.trim();
+  const city=document.getElementById('ssCity').value.trim();
+  if(!kw){toast('请输入关键词','warning');return;}
+  const mode=ssMode();
+  const modeLabel={fast:'快速',top5:'Top5 深度',all:'全部深度'}[mode];
+  btn.disabled=true;btn.textContent='分析中...';
+  document.getElementById('ssStatus').innerHTML='<span style="color:var(--text-3);">\u23F3 '+modeLabel+'模式：搜索 + 按公司分组'+(mode!=='fast'?' + 打开公司页分析 HR':'')+'...</span>';
+  document.getElementById('ssBody').innerHTML='<div class="empty" style="text-align:center;padding:40px 0;color:var(--text-3);">分析中'+(mode!=='fast'?'（深度模式较慢，请稍候）':'')+'...</div>';
+  document.getElementById('ssFooter').style.display='none';
+  try{
+    const p=new URLSearchParams();p.set('keyword',kw);if(city)p.set('city',city);p.set('mode',mode);
+    const r=await fetch('/api/companies/preview?'+p.toString());
+    const d=await r.json();_ssPreview=d;
+    if(!d.ok){
+      document.getElementById('ssStatus').innerHTML='<span style="color:var(--red);">\u274C '+esc(d.message||'失败')+'</span>';
+      document.getElementById('ssBody').innerHTML='<div class="empty" style="padding:40px 0;">无结果</div>';
+      return;
+    }
+    document.getElementById('ssStatus').innerHTML='<span style="color:var(--green);">\u2705 '+d.total_jobs+' 个岗位 \u00B7 '+d.total_companies+' 家公司</span>';
+    renderSmartSendPreview(d);
+    document.getElementById('ssFooter').style.display='flex';
+  }catch(e){document.getElementById('ssStatus').innerHTML='<span style="color:var(--red);">\u274C '+esc(e.message)+'</span>';}
+  finally{btn.disabled=false;btn.textContent='预览';}
+}
+
+function renderSmartSendPreview(d){
+  const body=document.getElementById('ssBody');
+  const companies=d.companies||[];
+  if(!companies.length){body.innerHTML='<div class="empty">未找到有效公司</div>';return;}
+  let html='<div style="margin-bottom:10px;font-size:12px;color:var(--text-3);display:flex;justify-content:space-between;align-items:center;">'
+    +'<span>'+d.total_companies+' 家公司（按岗位数排序）</span>'
+    +'<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;"><input type="checkbox" id="ssSelectAll" checked onchange="toggleAllSS(this.checked)">全选</label>'
+    +'</div>';
+  html+='<div id="ssCompanyList">';
+  companies.forEach((c,i)=>{
+    const top=c.top_hr;
+    const tj=c.target_job;
+    const checked=!c.already_applied?'checked':'';
+    const disabled=c.already_applied?'disabled':'';
+    const dim=c.already_applied?'opacity:.5;':'';
+    html+='<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:6px;border:1px solid var(--border);'+dim+'">'
+      +'<input type="checkbox" class="ss-chk" data-idx="'+i+'" '+checked+' '+disabled+' style="margin-top:4px;" onchange="updateSSBtn()">'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'
+      +'<span style="font-size:14px;font-weight:600;">'+esc(c.company)+'</span>'
+      +'<span style="font-size:11px;background:var(--bg-2);padding:1px 6px;border-radius:4px;font-family:var(--mono);">'+(c.open_count ? c.open_count+' 在招' : c.position_count+' 岗')+'</span>'
+      +(c.already_applied?'<span style="font-size:10px;color:var(--red);background:rgba(239,68,68,.1);padding:1px 6px;border-radius:4px;">已投过</span>':'')
+      +'</div>';
+    if(top){
+      html+='<div style="font-size:12px;margin-top:3px;color:var(--text-2);">\uD83C\uDFC6 '+esc(top.name)+' \u00B7 <span style="color:var(--text-3);">'+esc(top.title)+'</span></div>';
+    }else if(c.deep_analyzed){
+      html+='<div style="font-size:11px;margin-top:3px;color:var(--text-3);">（已分析，未识别到 HR 头衔）</div>';
+    }else{
+      html+='<div style="font-size:11px;margin-top:3px;color:var(--text-3);">（快速模式 · 搜索页无 HR 信息）</div>';
+    }
+    if(tj){
+      html+='<div style="font-size:11px;margin-top:2px;color:var(--text-3);">\u2192 '+esc(tj.title)+(tj.salary?' \u00B7 '+esc(tj.salary):'')+'</div>';
+    }
+    if(c.jobs && c.jobs.length > 1){
+      html+='<details style="margin-top:4px;"><summary style="font-size:10px;color:var(--text-3);cursor:pointer;">查看全部 '+c.jobs.length+' 个岗位</summary><div style="padding-left:4px;margin-top:4px;">';
+      c.jobs.forEach(j => {
+        html+='<div style="font-size:11px;color:var(--text-3);padding:1px 0;">'+esc(j.title)+(j.salary?' '+esc(j.salary):'')+(j.hr_name?' ['+esc(j.hr_name)+']':'')+'</div>';
+      });
+      html+='</div></details>';
+    }
+    html+='</div></div>';
+  });
+  html+='</div>';
+  body.innerHTML=html;
+  updateSSBtn();
+}
+
+function toggleAllSS(checked){document.querySelectorAll('.ss-chk:not(:disabled)').forEach(c=>c.checked=checked);updateSSBtn();}
+function updateSSBtn(){
+  const n=document.querySelectorAll('.ss-chk:checked:not(:disabled)').length;
+  const btn=document.getElementById('ssConfirmBtn');
+  if(btn)btn.textContent='\uD83C\uDFAF \u6279\u91CF\u6295\u9012 ('+n+' \u5BB6)';
+  const footer=document.getElementById('ssFooter');
+  if(footer)footer.style.display=n>0?'flex':'none';
+}
+
+async function doSmartSendConfirm(){
+  if(!_ssPreview||!_ssPreview.companies){toast('请先预览','warning');return;}
+  const companies=_ssPreview.companies||[];
+  const checks=document.querySelectorAll('.ss-chk:checked:not(:disabled)');
+  const targets=[];
+  checks.forEach(chk=>{
+    const idx=parseInt(chk.dataset.idx);
+    const c=companies[idx];
+    if(c&&c.target_job&&c.target_job.url){
+      targets.push({company:c.company,job_url:c.target_job.url,hr_name:(c.top_hr||{}).name||'',hr_title:(c.top_hr||{}).title||''});
+    }
+  });
+  if(!targets.length){toast('没有可投递的公司','warning');return;}
+  const btn=document.getElementById('ssConfirmBtn');
+  btn.disabled=true;btn.textContent='投递中...';
+  document.getElementById('ssStatus').innerHTML='<span style="color:var(--text-3);">正在批量投递 '+targets.length+' 家...</span>';
+  try{
+    const r=await fetch('/api/companies/smart-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets,confirm:true})});
+    const d=await r.json();
+    if(d.success||d.applied>0){
+      document.getElementById('ssStatus').innerHTML='<span style="color:var(--green);">\u2705 '+esc(d.message)+'</span>';
+      toast('\uD83C\uDFAF '+d.message,'success');
+      renderSmartSendResults(d);
+      if(typeof refreshStatus==='function')refreshStatus();
+      if(typeof loadJobs==='function')loadJobs();
+      if(typeof loadApplications==='function')loadApplications();
+    }else{
+      document.getElementById('ssStatus').innerHTML='<span style="color:var(--red);">\u274C '+esc(d.message||'失败')+'</span>';
+      toast(d.message||'失败','error');
+    }
+  }catch(e){document.getElementById('ssStatus').innerHTML='<span style="color:var(--red);">\u274C 请求失败</span>';toast('请求失败','error');}
+  finally{btn.disabled=false;updateSSBtn();}
+}
+
+function renderSmartSendResults(d){
+  const body=document.getElementById('ssBody');
+  const results=d.results||[];
+  let html='<div style="text-align:center;padding:14px 0 18px;">'
+    +'<div style="font-size:36px;">\uD83C\uDFAF</div>'
+    +'<div style="font-size:16px;font-weight:700;margin-top:6px;">投递完成</div>'
+    +'<div style="font-size:13px;color:var(--text-2);margin-top:4px;">'+d.applied+' 成功 \u00B7 '+d.skipped+' 跳过 \u00B7 共 '+d.total+' 家</div>'
+    +'<div style="font-size:11px;color:var(--text-3);margin-top:8px;">已发招呼语 \u00B7 会话已建立 \u00B7 可到「聊天」Tab 查看 HR 回复</div>'
+    +'</div>';
+  html+='<div style="border-top:1px solid var(--border);padding-top:10px;">';
+  results.forEach(function(rr){
+    const ok=rr.status==='success';
+    const skip=rr.status==='skipped';
+    const icon=ok?'\u2705':(skip?'\u23ED\uFE0F':'\u274C');
+    const color=ok?'var(--green)':(skip?'var(--text-3)':'var(--red)');
+    html+='<div class="ss-res-row" style="background:var(--bg-1);">'
+      +'<span>'+icon+'</span>'
+      +'<span style="flex:1;color:'+color+';">'+esc(rr.company||'')+'</span>'
+      +(rr.job_title?'<span style="font-size:11px;color:var(--text-3);">'+esc(rr.job_title)+'</span>':'')
+      +(rr.hr_name?'<span style="font-size:11px;color:var(--text-2);">'+esc(rr.hr_name)+'</span>':'')
+      +(rr.reason?'<span style="font-size:11px;color:var(--text-3);">'+esc(rr.reason)+'</span>':'')
+      +'</div>';
+  });
+  html+='</div>';
+  html+='<div style="text-align:center;margin-top:14px;"><button class="btn btn-ghost btn-sm" onclick="closeSmartSendModal()">关闭</button> '
+    +'<button class="btn btn-primary btn-sm" onclick="switchTab(\'chat\')">去聊天 Tab \u2192</button></div>';
+  body.innerHTML=html;
+  document.getElementById('ssFooter').style.display='none';
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  const modal=document.getElementById('smartSendModal');
+  if(modal)modal.addEventListener('click',e=>{if(e.target===modal)closeSmartSendModal();});
+});
+</script>
+
 </body>
 </html>
