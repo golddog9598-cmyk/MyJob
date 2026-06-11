@@ -24,6 +24,42 @@ import time
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
+
+_INVALID_COMPANY_RE = re.compile(
+    r"^("
+    r"\d+[-~]\d+K"
+    r"|\d+-\d+\u5143"
+    r"|\d+\u5143/[\u65f6\u6708]"
+    r"|\d+-\d+\u5e74"
+    r"|\d+\u5e74\u4ee5[\u4e0a\u5185]"
+    r"|1\u5e74\u4ee5\u5185"
+    r"|\u7ecf\u9a8c\u4e0d\u9650|\u5b66\u5386\u4e0d\u9650|\u4e0d\u9650"
+    r"|\u5728\u6821|\u5e94\u5c4a|\u5b9e\u4e60"
+    r"|\u672c\u79d1|\u7855\u58eb|\u535a\u58eb|\u5927\u4e13|\u4e2d\u4e13|\u4e2d\u6280|\u9ad8\u4e2d|\u521d\u4e2d"
+    r"|\u5168\u804c|\u517c\u804c"
+    r"|\d+\u5929/\u5468"
+    r"|\d+-\d+\u4eba"
+    r"|\d+\u4eba\u4ee5\u4e0a"
+    r"|\d+\u4eba"
+    r")$",
+    re.I,
+)
+
+
+def _is_invalid_company(name: str) -> bool:
+    if not name or len(name) < 2:
+        return True
+    name = name.strip()
+    if _INVALID_COMPANY_RE.match(name):
+        return True
+    if "/" in name and len(name) <= 8:
+        parts = name.split("/")
+        if all(len(p.strip()) <= 4 for p in parts):
+            if any(k in name for k in ["\u4e13", "\u6280", "\u79d1", "\u58eb", "\u4e2d", "\u9ad8", "\u5e74", "\u9650"]):
+                return True
+    return False
+
+
 from urllib.parse import quote_plus
 
 from playwright.sync_api import sync_playwright
@@ -560,12 +596,33 @@ class BossScraper:
 
     # ── 搜索列表页 ──
 
-    def search(self, keyword, city_code="100010000"):
-        """搜索关键词，返回岗位列表"""
-        url = "https://www.zhipin.com/web/geek/job?query=%s&city=%s" % (
-            quote_plus(keyword),
-            city_code,
-        )
+    def search(self, keyword, city_code="100010000", district="", company_size=""):
+        """搜索关键词，返回岗位列表。
+
+        BOSS 直聘的筛选条件通过 URL 参数传递：
+          - area: 区/县 code（前端可传名，运行时尝试用 DOM 选区；为兼容旧用法，这里
+                 仅按 district 名称追加到 URL 查询串后由页面读取，本地不再做映射）
+          - scale: 公司规模数字，0=不限, 1=0-20, 2=20-99, 3=100-499, 4=500-999, 5=1000-9999, 6=10000+
+
+        为避免误传未识别的值，district/scale 若无法识别则不追加，让页面使用默认。
+        """
+        scale_map = {
+            "0-20人": "1",
+            "20-99人": "2",
+            "100-499人": "3",
+            "500-999人": "4",
+            "1000-9999人": "5",
+            "10000人以上": "6",
+        }
+        scale_code = scale_map.get(company_size, "")
+
+        params = [f"query={quote_plus(keyword)}", f"city={city_code}"]
+        if scale_code:
+            params.append(f"scale={scale_code}")
+        if district:
+            # BOSS 区/县参数为 area（具体编码由 BOSS 解析，名称也支持回退）
+            params.append(f"area={quote_plus(district)}")
+        url = "https://www.zhipin.com/web/geek/job?" + "&".join(params)
         self.page.goto(url, wait_until="load", timeout=45000)
         pause(3, 5)
         self._scroll_all()
@@ -666,7 +723,9 @@ class BossScraper:
                 document.querySelectorAll('a[href*="/job_detail/"]').forEach(a => {
                     const href = a.href || a.getAttribute('href') || '';
                     if (!href || seen.has(href)) return;
-                    const card = a.closest('.job-card-wrapper, .job-card-body, .job-primary, li, .job-list-box, .search-job-result') || a;
+                    // 锁定岗位卡：必须用 [class*="job-card"] / [class*="search-job"] / .job-primary，
+                    // 不能用裸 li（会命中左侧筛选侧栏的 <li> 选项）
+                    const card = a.closest('.job-card-wrapper, .job-card-body, .job-primary, [class*="job-card-wrapper"], [class*="search-job-result"], [class*="job-list-box"]') || a;
                     const lines = linesOf(card);
                     let title = pickText(card, [
                         '.job-name', '.job-title', '.job-card-left .job-name',
@@ -678,6 +737,24 @@ class BossScraper:
                         '.company-name', '.brand-name', '.company-text',
                         '[class*="company-name"]', '[class*="brand-name"]'
                     ]);
+                    // 兜底：card 里没 .company-name 时，从最近的 [class*="company-info"] 找
+                    if (!company) {
+                        const infoBlock = card.querySelector('[class*="company-info"]');
+                        if (infoBlock) company = clean(infoBlock.innerText);
+                    }
+                    // 脏数据过滤：company 不应包含经验/学历/薪资关键词（这些是其他字段）
+                    if (company && /经验|应届|在校|不限|学历|本科|硕士|博士|大专|中专|高中|元\\\/时|元\\\/月|\\\\d+[-~]\\\\d+K|\\\\d+-\\\\d+元|\\\\d+人以上|\\\\d+人/.test(company)) {
+                        company = '';
+                    }
+                    // 兜底：长度过短或纯数字也当作脏数据
+                    if (company && (company.length < 2 || /^\\d+$/.test(company))) {
+                        company = '';
+                    }
+                    // companyId: 从公司名链接的 href 里取 /gongsi/<id>.html
+                    let companyId = '';
+                    const brandHref = card.querySelector('a[href*="/gongsi/"]')?.getAttribute('href') || '';
+                    const m = brandHref.match(/\/gongsi\/(?:job\/)?([0-9a-zA-Z]+~?)/);
+                    if (m) companyId = m[1];
                     let city = pickText(card, ['.job-area', '[class*="job-area"]'])
                         || lines.find(x => x.includes('·') && x.length < 40) || '';
                     let experience = lines.find(x => /经验|应届|在校|不限/.test(x) && x.length < 30) || '';
@@ -690,9 +767,22 @@ class BossScraper:
                         ) || '';
                     }
                     title = title.replace(/\\s+/g, ' ').trim();
+                    // HR: extract from card
+                    let hrName = '';
+                    let hrTitle = '';
+                    const hrEl = card.querySelector('[class*="info-public"], [class*="job-info"], [class*="hr-"], [class*="recruiter"]');
+                    let hrText = hrEl ? (hrEl.innerText || '').trim() : '';
+                    if (!hrText) {
+                        hrText = lines.find(x => /^[一-龥]{2,4}[\s·•·]+/.test(x) && /人事|招聘|经理|主管|总监|HRBP|HR|负责人|助理|专员|猎头|顾问/.test(x)) || '';
+                    }
+                    if (hrText) {
+                        const hm = hrText.match(/^([一-龥]{2,4})\s*[·•·\s]\s*(.+)$/);
+                        if (hm) { hrName = hm[1]; hrTitle = hm[2].trim(); }
+                        else { hrName = hrText.substring(0, 4).replace(/[·•\s]/g, ''); }
+                    }
                     if (title && salary) {
                         seen.add(href);
-                        cards.push({title, salary, company, city, experience, education, url: href});
+                        cards.push({title, salary, company, company_id: companyId, city, experience, education, url: href, hr_name: hrName, hr_title: hrTitle});
                     }
                 });
                 return cards;
@@ -708,18 +798,22 @@ class BossScraper:
             if not url or not title or url in seen:
                 continue
             seen.add(url)
+            company = (row.get("company") or "").strip()
+            if company and _is_invalid_company(company):
+                company = ""
             jobs.append(
                 {
                     "title": title,
                     "salary": decode_salary((row.get("salary") or "").strip()),
-                    "company": (row.get("company") or "").strip(),
+                    "company": company,
+                    "company_id": (row.get("company_id") or row.get("companyId") or "").strip(),
                     "experience": (row.get("experience") or "").strip(),
                     "education": (row.get("education") or "").strip(),
                     "city": (row.get("city") or "").strip(),
                     "url": url,
                     "description": "",
-                    "hr_name": "",
-                    "hr_title": "",
+                    "hr_name": (row.get("hr_name") or "").strip(),
+                    "hr_title": (row.get("hr_title") or "").strip(),
                 }
             )
         return jobs

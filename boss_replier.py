@@ -257,6 +257,10 @@ def generate_greeting_ai(
     """用 LLM 生成个性化打招呼语；任何失败都回退到模板版 generate_greeting。
 
     依据 JD、是否老板、简历摘要定制。AI 不可用时无感降级。
+    模式：
+      - greeting_mode == "smart"：按用户在前端「智能」选项下保存的 smart_greeting_prompt
+        规则化生成（方向 + 3痛点 + 效果付费话术），结果中若占位符残留则回退。
+      - 其他 / 关闭 AI 招呼：使用通用自然风格。
     """
     # 设置里可关闭 AI 招呼
     if get_setting("ai_greeting_enabled", "true") != "true":
@@ -266,28 +270,26 @@ def generate_greeting_ai(
         return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
     try:
+        greeting_mode = get_setting("greeting_mode", "template")
         style_hint = {
             "professional": "语气正式专业",
             "casual": "语气轻松友好",
             "enthusiastic": "语气热情积极",
         }.get(style, "语气正式专业")
 
-        parts = [
-            f"招聘公司: {company or '未知'}",
-            f"岗位名称: {job_title or '未知'}",
-            f"招聘者称呼: {hr_name or '（未知，可不带称呼）'}",
-            f"boss_hint: {'true' if is_boss else 'false'}",
-        ]
-        if job_desc:
-            parts.append(f"岗位JD（节选）: {job_desc[:400]}")
-        if resume_summary:
-            parts.append(f"我的简历摘要: {resume_summary[:300]}")
-        parts.append(f"\n本次风格: {style_hint}")
-        parts.append("请生成打招呼语正文：")
+        if greeting_mode == "smart":
+            system_prompt, user_prompt = _build_smart_prompts(
+                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint
+            )
+        else:
+            system_prompt = GREETING_SYSTEM_PROMPT
+            user_prompt = _build_generic_prompt(
+                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint
+            )
 
         messages = [
-            {"role": "system", "content": GREETING_SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(parts)},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ]
 
         raw = llm_chat_deepseek(messages, temperature=0.8)
@@ -303,6 +305,10 @@ def generate_greeting_ai(
         if re.search(r"微信|wechat|vx|\bv信\b|qq|电话|手机号|\d{11}", text, re.I):
             return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
+        # smart 模式额外校验：占位符未替换完 → 回退
+        if greeting_mode == "smart" and re.search(r"【[^】]*】|\{[^}]*\}", text):
+            return generate_greeting(job_title, company, style=style, hr_name=hr_name)
+
         # 开头补称呼（如果有 hr_name 且没带）
         if hr_name and not text.startswith(hr_name):
             text = f"{hr_name}您好，{text}"
@@ -310,3 +316,54 @@ def generate_greeting_ai(
     except Exception as e:
         print(f"  ⚠️ generate_greeting_ai 回退模板: {e}")
         return generate_greeting(job_title, company, style=style, hr_name=hr_name)
+
+
+def _build_generic_prompt(job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint):
+    parts = [
+        f"招聘公司: {company or '未知'}",
+        f"岗位名称: {job_title or '未知'}",
+        f"招聘者称呼: {hr_name or '（未知，可不带称呼）'}",
+        f"boss_hint: {'true' if is_boss else 'false'}",
+    ]
+    if job_desc:
+        parts.append(f"岗位JD（节选）: {job_desc[:400]}")
+    if resume_summary:
+        parts.append(f"我的简历摘要: {resume_summary[:300]}")
+    parts.append(f"\n本次风格: {style_hint}")
+    parts.append("请生成打招呼语正文：")
+    return "\n".join(parts)
+
+
+def _build_smart_prompts(job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint):
+    """smart 模式：消费用户在前端填的 smart_greeting_prompt（规则化）。"""
+    user_rules = get_setting("smart_greeting_prompt", "")
+    if not user_rules.strip():
+        user_rules = (
+            "规则：\n"
+            "1. 从JD岗位职责中找3个最耗时的痛点/能力\n"
+            "2. 从岗位名提一个词做方向（如AI运营、大模型）\n"
+            "3. 每个痛点不超过8个字\n"
+            "4. 严格按以下格式，不加解释：\n\n"
+            "老板，我的方向是【方向】方向——【能力1】、【能力2】、【能力3】，按效果付费，做不到不拿底薪，聊聊？"
+        )
+
+    system_prompt = (
+        "你是求职者本人，按下方「用户规则」严格生成一段打招呼语。\n"
+        "- 只输出最终招呼语正文一行，不要任何解释、不要引号、不要JSON\n"
+        "- 不出现微信/电话/QQ等联系方式（BOSS会拦截）\n"
+        f"- 称呼：{hr_name or '不带称呼'}\n"
+        f"- 风格：{style_hint}\n"
+        f"- 是否老板：{'true' if is_boss else 'false'}\n\n"
+        f"=== 用户规则 ===\n{user_rules}\n"
+    )
+
+    user_prompt_parts = [
+        f"招聘公司: {company or '未知'}",
+        f"岗位名称: {job_title or '未知'}",
+    ]
+    if job_desc:
+        user_prompt_parts.append(f"岗位JD（节选）: {job_desc[:600]}")
+    if resume_summary:
+        user_prompt_parts.append(f"我的简历摘要: {resume_summary[:300]}")
+    user_prompt_parts.append("请按上方规则生成一行招呼语：")
+    return system_prompt, "\n".join(user_prompt_parts)
