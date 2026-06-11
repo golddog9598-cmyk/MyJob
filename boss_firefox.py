@@ -596,55 +596,87 @@ class BossScraper:
 
     # ── 搜索列表页 ──
 
-    def search(self, keyword, city_code="100010000", district="", company_size=""):
+    def search(self, keyword, city_code="100010000", districts=None, district="", company_size=None):
         """搜索关键词，返回岗位列表。
 
         参数：
-          - district: 区名（如"张店区"）或区 code（如"440118"）。后端调用 boss_geo
-            解析为区 code 后拼到 URL 的 multiBusinessDistrict 参数。
-          - company_size: BOSS 实际 scale 值，可以是中文规模名（查表）或 BOSS 数字
-            code（"302" 等组合值）。识别不出则不拼 scale 参数。
+          - districts: 多区列表（推荐）。元素可传区名（如"增城区"）或区 code（如"440118"）。
+            后端调用 boss_geo 解析为区 code 后拼成 multiBusinessDistrict=a&multiBusinessDistrict=b
+            （BOSS URL 用重复参数表示多区）。
+          - district: 单区字符串（兼容旧接口）。如果同时传了 districts，则忽略。
+          - company_size: 公司规模过滤。可传：
+              * None / "" / []：不拼 scale
+              * str（"20-99人" 或 "302"）：单值
+              * List[str] / tuple：多值（拼为 scale=301,302,...）
+            中文人名按本地映射查 code，未识别则跳过该条。
 
         BOSS URL 实际过滤参数（参考真实请求）：
           city=101280100
-          multiBusinessDistrict=440118 (可重复, 多区用 & 重复参数)
-          scale=302
+          multiBusinessDistrict=440118&multiBusinessDistrict=440113 (可重复, 多区用 & 重复参数)
+          scale=302,301,303,304,305,306 (多值逗号分隔)
         """
         scale_name_to_code = {
-            "0-20人": "1",
-            "20-99人": "2",
-            "100-499人": "3",
-            "500-999人": "4",
-            "1000-9999人": "5",
-            "10000人以上": "6",
+            "0-20人": "301",
+            "20-99人": "302",
+            "100-499人": "303",
+            "500-999人": "304",
+            "1000-9999人": "305",
+            "10000人以上": "306",
+            "不限": "",
         }
-        scale_code = ""
-        if company_size:
-            cs = str(company_size).strip()
-            if cs.isdigit():
-                scale_code = cs  # 调用方直接传 BOSS 数字 code
-            else:
-                scale_code = scale_name_to_code.get(cs, "")
 
-        district_code = ""
-        if district:
-            ds = str(district).strip()
-            if ds.isdigit() and len(ds) >= 6:
-                district_code = ds
-            else:
-                # 解析区名 → code（city_code 同时可作为名字传入）
-                try:
-                    from boss_geo import resolve_district_code
+        if company_size is None:
+            company_size = ""
+        if isinstance(company_size, (list, tuple, set)):
+            size_items = [str(s).strip() for s in company_size if s]
+        else:
+            s = str(company_size).strip()
+            size_items = [x.strip() for x in s.split(",") if x.strip()] if s else []
 
-                    district_code = resolve_district_code(city_code, ds) or ""
-                except Exception:
-                    district_code = ""
+        scale_codes: list[str] = []
+        for item in size_items:
+            if item.isdigit():
+                if item not in scale_codes:
+                    scale_codes.append(item)
+                continue
+            code = scale_name_to_code.get(item, "")
+            if code and code not in scale_codes:
+                scale_codes.append(code)
+
+        # 收集区列表：districts 优先，回退到 district
+        district_inputs: list[str] = []
+        if districts:
+            if isinstance(districts, (list, tuple, set)):
+                district_inputs = [str(d).strip() for d in districts if d]
+            else:
+                s = str(districts).strip()
+                district_inputs = [x.strip() for x in s.split(",") if x.strip()] if s else []
+        elif district:
+            s = str(district).strip()
+            district_inputs = [x.strip() for x in s.split(",") if x.strip()] if s else [s]
+
+        district_codes: list[str] = []
+        if district_inputs:
+            try:
+                from boss_geo import resolve_district_code
+            except Exception:
+                resolve_district_code = None  # type: ignore
+            for ds in district_inputs:
+                if ds.isdigit() and len(ds) >= 6:
+                    if ds not in district_codes:
+                        district_codes.append(ds)
+                    continue
+                if resolve_district_code is None:
+                    continue
+                code = resolve_district_code(city_code, ds) or ""
+                if code and code not in district_codes:
+                    district_codes.append(code)
 
         params = [f"query={quote_plus(keyword)}", f"city={city_code}"]
-        if scale_code:
-            params.append(f"scale={scale_code}")
-        if district_code:
-            params.append(f"multiBusinessDistrict={district_code}")
+        if scale_codes:
+            params.append(f"scale={','.join(scale_codes)}")
+        for dc in district_codes:
+            params.append(f"multiBusinessDistrict={dc}")
 
         url = "https://www.zhipin.com/web/geek/job?" + "&".join(params)
         self.page.goto(url, wait_until="load", timeout=45000)

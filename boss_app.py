@@ -259,9 +259,12 @@ class SearchRequest(BaseModel):
     city: str = ""
     welfare: Optional[str] = None
     limit: int = 60
-    # 新增：区域/公司规模过滤
-    district: Optional[str] = ""  # 行政区，如 "张店区"
-    company_size: Optional[str] = ""  # 公司人数，如 "20-99人"、"100-499人"
+    # 区域/公司规模过滤
+    district: Optional[str] = ""  # 单区字符串（兼容旧接口），如 "张店区"
+    districts: Optional[List[str]] = None  # 多区列表：["增城区", "番禺区"]，优先于 district
+    # company_size 支持列表多选 / 字符串单值 / "302,303" 逗号串
+    company_size: Optional[List[str]] = None  # 列表形式优先
+    company_size_str: Optional[str] = None  # 兼容旧的字符串字段
 
 
 class ApplyRequest(BaseModel):
@@ -676,13 +679,33 @@ async def search_jobs(req: SearchRequest):
     try:
         city_code = CITY_MAP.get(req.city or get_setting("default_city", "全国"), "100010000")
         try:
-            # 传递新增过滤条件（district/company_size）给搜索逻辑
+            # 合并 company_size 列表/字符串两路来源（前端可用 list，旧 CLI 可用 str）
+            cs_list: list = []
+            if req.company_size:
+                if isinstance(req.company_size, list):
+                    cs_list = [str(s).strip() for s in req.company_size if s]
+                else:
+                    cs_list = [str(req.company_size).strip()]
+            if req.company_size_str and req.company_size_str not in cs_list:
+                cs_list.append(req.company_size_str)
+
+            # 合并 district 单/多两路来源
+            ds_list: list = []
+            if req.districts:
+                if isinstance(req.districts, list):
+                    ds_list = [str(d).strip() for d in req.districts if d]
+                else:
+                    ds_list = [str(req.districts).strip()]
+            if req.district and req.district not in ds_list:
+                ds_list.append(req.district)
+
             jobs = await _run_pw(
                 automation.search,
                 req.keyword,
                 city_code,
-                (req.district or ""),
-                (req.company_size or ""),
+                ds_list or None,  # 多区列表（list / None）
+                "",  # 旧单区字段已合并到 ds_list
+                cs_list if cs_list else None,  # 规模列表
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
