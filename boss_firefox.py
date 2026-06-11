@@ -599,14 +599,18 @@ class BossScraper:
     def search(self, keyword, city_code="100010000", district="", company_size=""):
         """搜索关键词，返回岗位列表。
 
-        BOSS 直聘的筛选条件通过 URL 参数传递：
-          - area: 区/县 code（前端可传名，运行时尝试用 DOM 选区；为兼容旧用法，这里
-                 仅按 district 名称追加到 URL 查询串后由页面读取，本地不再做映射）
-          - scale: 公司规模数字，0=不限, 1=0-20, 2=20-99, 3=100-499, 4=500-999, 5=1000-9999, 6=10000+
+        参数：
+          - district: 区名（如"张店区"）或区 code（如"440118"）。后端调用 boss_geo
+            解析为区 code 后拼到 URL 的 multiBusinessDistrict 参数。
+          - company_size: BOSS 实际 scale 值，可以是中文规模名（查表）或 BOSS 数字
+            code（"302" 等组合值）。识别不出则不拼 scale 参数。
 
-        为避免误传未识别的值，district/scale 若无法识别则不追加，让页面使用默认。
+        BOSS URL 实际过滤参数（参考真实请求）：
+          city=101280100
+          multiBusinessDistrict=440118 (可重复, 多区用 & 重复参数)
+          scale=302
         """
-        scale_map = {
+        scale_name_to_code = {
             "0-20人": "1",
             "20-99人": "2",
             "100-499人": "3",
@@ -614,14 +618,34 @@ class BossScraper:
             "1000-9999人": "5",
             "10000人以上": "6",
         }
-        scale_code = scale_map.get(company_size, "")
+        scale_code = ""
+        if company_size:
+            cs = str(company_size).strip()
+            if cs.isdigit():
+                scale_code = cs  # 调用方直接传 BOSS 数字 code
+            else:
+                scale_code = scale_name_to_code.get(cs, "")
+
+        district_code = ""
+        if district:
+            ds = str(district).strip()
+            if ds.isdigit() and len(ds) >= 6:
+                district_code = ds
+            else:
+                # 解析区名 → code（city_code 同时可作为名字传入）
+                try:
+                    from boss_geo import resolve_district_code
+
+                    district_code = resolve_district_code(city_code, ds) or ""
+                except Exception:
+                    district_code = ""
 
         params = [f"query={quote_plus(keyword)}", f"city={city_code}"]
         if scale_code:
             params.append(f"scale={scale_code}")
-        if district:
-            # BOSS 区/县参数为 area（具体编码由 BOSS 解析，名称也支持回退）
-            params.append(f"area={quote_plus(district)}")
+        if district_code:
+            params.append(f"multiBusinessDistrict={district_code}")
+
         url = "https://www.zhipin.com/web/geek/job?" + "&".join(params)
         self.page.goto(url, wait_until="load", timeout=45000)
         pause(3, 5)
