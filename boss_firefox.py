@@ -683,6 +683,11 @@ class BossScraper:
         pause(3, 5)
         self._scroll_all()
 
+        # 优先：列表 XHR 拉取 + 详情 XHR 补全（拿 JD/真实 HR 名/可投递权限）
+        xhr_jobs = self._fetch_jobs_via_xhr(keyword, city_code, district_codes, scale_codes, max_pages=1)
+        if xhr_jobs:
+            return xhr_jobs
+
         dom_jobs = self._extract_job_cards()
         if dom_jobs:
             return dom_jobs
@@ -873,6 +878,196 @@ class BossScraper:
                 }
             )
         return jobs
+
+    # ══════════════════════════════════════
+    #  XHR 抓取（列表 + 详情），替代部分 DOM 抓取
+    # ══════════════════════════════════════
+
+    def _extract_zp_headers(self) -> dict:
+        """从当前页面提取 BOSS 接口所需的 zp_token / token。失败时返回空 dict。"""
+        try:
+            return (
+                self.page.evaluate(
+                    r"""
+                () => {
+                    function pick(obj, key) {
+                        try { return obj && obj[key]; } catch (e) { return ''; }
+                    }
+                    // 1) 全局对象
+                    let zp_token = '', token = '';
+                    for (const k of Object.keys(window)) {
+                        try {
+                            const v = window[k];
+                            if (v && typeof v === 'object') {
+                                if (!zp_token && typeof v.zpToken === 'string') zp_token = v.zpToken;
+                                if (!token && typeof v.token === 'string') token = v.token;
+                            }
+                        } catch (e) {}
+                    }
+                    // 2) Cookie 衍生
+                    if (!zp_token) {
+                        const m = document.cookie.match(/(?:^|;\s*)bst=([^;]+)/);
+                        if (m) zp_token = decodeURIComponent(m[1]);
+                    }
+                    if (!token) {
+                        const m = document.cookie.match(/(?:^|;\s*)__a=([^;]+)/);
+                        if (m) token = m[1].split('.')[0];
+                    }
+                    return { zp_token, token };
+                }
+                """
+                )
+                or {}
+            )
+        except Exception:
+            return {}
+
+    def _fetch_jobs_via_xhr(
+        self,
+        keyword: str,
+        city_code: str,
+        district_codes: list,
+        scale_codes: list,
+        max_pages: int = 1,
+    ) -> list:
+        """通过 BOSS XHR 抓取岗位列表 + 详情。
+
+        列表接口：POST /wapi/zpgeek/search/joblist.json
+        详情接口：GET  /wapi/zpgeek/job/detail.json?securityId=...&lid=...
+
+        抓取失败（zp_token 缺失、接口非 0、网络错误等）一律返回空 list，
+        调用方回退到 DOM 抓取。
+        """
+        try:
+            headers = self._extract_zp_headers()
+            zp_token = headers.get("zp_token") or ""
+            token = headers.get("token") or ""
+            if not zp_token:
+                return []
+
+            list_headers = {
+                "zp_token": zp_token,
+                "token": token,
+                "X-Requested-With": "XMLHttpRequest",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://www.zhipin.com",
+                "Referer": self.page.url,
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+            }
+            detail_headers = dict(list_headers)
+            detail_headers["Accept"] = "application/json, text/plain, */*"
+
+            all_jobs: list = []
+            for page in range(1, max_pages + 1):
+                form: dict = {
+                    "page": str(page),
+                    "pageSize": "15",
+                    "city": str(city_code),
+                    "query": keyword or "",
+                    "expectInfo": "",
+                    "multiSubway": "",
+                    "position": "",
+                    "jobType": "",
+                    "salary": "",
+                    "experience": "",
+                    "degree": "",
+                    "industry": "",
+                    "stage": "",
+                    "scene": "1",
+                    "encryptExpectId": "",
+                }
+                for dc in district_codes or []:
+                    form["multiBusinessDistrict"] = str(dc)
+                if scale_codes:
+                    form["scale"] = ",".join(str(s) for s in scale_codes)
+
+                try:
+                    r = self.page.request.post(
+                        "https://www.zhipin.com/wapi/zpgeek/search/joblist.json",
+                        form=form,
+                        headers=list_headers,
+                        timeout=20,
+                    )
+                except Exception:
+                    return []
+                try:
+                    payload = r.json()
+                except Exception:
+                    return []
+                if not isinstance(payload, dict) or payload.get("code") != 0:
+                    return []
+                job_list = (payload.get("zpData") or {}).get("jobList") or []
+                if not job_list:
+                    break
+
+                for j in job_list:
+                    security_id = j.get("securityId") or ""
+                    lid = j.get("lid") or ""
+                    item = {
+                        "title": j.get("jobName", ""),
+                        "salary": j.get("salaryDesc", ""),
+                        "company": j.get("brandName", ""),
+                        "experience": j.get("jobExperience", ""),
+                        "education": j.get("jobDegree", ""),
+                        "city": j.get("cityName", ""),
+                        "area_district": j.get("areaDistrict", ""),
+                        "business_district": j.get("businessDistrict", ""),
+                        "company_size": j.get("brandScaleName", ""),
+                        "industry": j.get("brandIndustry", ""),
+                        "url": f"https://www.zhipin.com/job_detail/{j.get('encryptJobId', '')}"
+                        if j.get("encryptJobId")
+                        else "",
+                        "description": "",
+                        "hr_name": "",
+                        "hr_title": "",
+                        "security_id": security_id,
+                        "lid": lid,
+                        "encrypt_job_id": j.get("encryptJobId", ""),
+                        "encrypt_brand_id": j.get("encryptBrandId", ""),
+                        "encrypt_boss_id": j.get("encryptBossId", ""),
+                    }
+                    # 详情：拿 JD 和真实 HR 名
+                    if security_id and lid:
+                        try:
+                            r2 = self.page.request.get(
+                                "https://www.zhipin.com/wapi/zpgeek/job/detail.json",
+                                params={"securityId": security_id, "lid": lid},
+                                headers=detail_headers,
+                                timeout=15,
+                            )
+                            p2 = r2.json() if r2.status_code == 200 else {}
+                        except Exception:
+                            p2 = {}
+                        if isinstance(p2, dict) and p2.get("code") == 0:
+                            zd = p2.get("zpData") or {}
+                            ji = zd.get("jobInfo") or {}
+                            bi = zd.get("bossInfo") or {}
+                            bc = zd.get("brandComInfo") or {}
+                            ok = zd.get("oneKeyResumeInfo") or {}
+                            item["description"] = ji.get("postDescription", "") or ""
+                            item["hr_name"] = bi.get("name", "") or ""
+                            item["hr_title"] = bi.get("title", "") or ""
+                            if not item["company"]:
+                                item["company"] = bc.get("brandName", "") or ""
+                            if not item["company_size"]:
+                                item["company_size"] = bc.get("scaleName", "") or ""
+                            if not item["industry"]:
+                                item["industry"] = bc.get("industryName", "") or ""
+                            item["encrypt_brand_id"] = bc.get("encryptBrandId", "") or item["encrypt_brand_id"]
+                            item["can_send_resume"] = bool(ok.get("canSendResume", False))
+                            item["can_send_wechat"] = bool(ok.get("canSendWechat", False))
+                            item["can_send_phone"] = bool(ok.get("canSendPhone", False))
+                            item["already_apply"] = bool(
+                                (zd.get("atsOnlineApplyInfo") or {}).get("alreadyApply", False)
+                            )
+                    all_jobs.append(item)
+
+            return all_jobs
+        except Exception:
+            return []
 
     def _scroll_all(self, max_scrolls: int = 60, stable_rounds: int = 3):
         """持续滚动直到没有新内容加载，或达到最大滚动次数。"""
