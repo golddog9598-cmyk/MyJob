@@ -1430,6 +1430,11 @@ async def update_settings(req: SettingsUpdate):
             set_setting("ai_api_key", str(v))
             updates["ai_key_configured"] = "true"
             continue
+        # 允许清空个人微信：前端传空字符串时覆盖为""
+        if k == "wechat_id" and (v is None or v == ""):
+            set_setting("wechat_id", "")
+            updates["wechat_id"] = ""
+            continue
         if v is not None and v != "":
             set_setting(k, str(v))
             updates[k] = str(v)
