@@ -4,6 +4,14 @@ import json
 import sys
 from typing import Optional
 
+# Windows 默认 GBK 控制台无法编码 BOSS 返回里的部分罕见 Unicode（如 \u2f24 等 CJK 部首字符）。
+# 强制把 stdout/stderr 切换到 UTF-8 + 错误回退到 backslashreplace，避免 UnicodeEncodeError 中断 JSON 输出。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
 
 def ok(command: str, data=None, **kwargs) -> dict:
     envelope = {
@@ -26,7 +34,11 @@ def fail(command: str, error: str) -> dict:
 
 
 def emit(result: dict):
-    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+    try:
+        json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+    except UnicodeEncodeError:
+        # 终极兜底：转义所有非 ASCII，保证 JSON 输出永远不中断
+        json.dump(result, sys.stdout, ensure_ascii=True, indent=2)
     sys.stdout.write("\n")
 
 

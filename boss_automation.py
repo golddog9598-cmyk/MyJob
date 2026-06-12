@@ -1852,6 +1852,144 @@ class BossAutomation(BossScraper):
     #  监控周期（供后台循环调用）
     # ══════════════════════════════════════
 
+    def _click_chat_tab(self, label: str) -> bool:
+        """切换聊天页顶部 Tab（全部/未读/新招呼/仅沟通）。"""
+        for sel in (f'span.label-name:has-text("{label}")', f'.label-name:has-text("{label}")'):
+            try:
+                tab = self.page.locator(sel).first
+                if tab.count() > 0 and tab.is_visible():
+                    tab.click()
+                    pause(0.5, 1)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def sync_conversation_list_full(self) -> int:
+        """在「全部」Tab 下抽取每个会话卡片的 hr_name / company / job_title / last_msg
+        并写回数据库。返回更新的会话数。失败返回 0，不抛异常。
+        """
+        try:
+            self._click_chat_tab("全部")
+        except Exception:
+            pass
+        try:
+            cards = self.page.evaluate(
+                """() => {
+                const out = [];
+                const seen = new Set();
+                const items = document.querySelectorAll('li[role="listitem"], .user-list li');
+                const visible = el => {
+                    const r = el.getBoundingClientRect();
+                    const s = getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                };
+                const ROLE_RE = /(招聘者|招聘专员|招聘主管|招聘总监|HR(经理|主管|总监|专员)?|人力(资源)?(专员|经理|主管|总监|顾问)?|人力|人事(经理|主管|总监|专员)?|人事|猎头(顾问|经理)?|猎头|顾问|总监|经理|老板|创始人|合伙人|首席执行官|CEO|CTO|COO|CFO|VP|主管|专员|区域)$/;
+                let pos = 0;
+                for (const el of items) {
+                    if (!visible(el)) continue;
+                    const fullText = (el.innerText || '').trim();
+                    if (!fullText || fullText.length < 2) continue;
+                    const key = fullText.replace(/\\s+/g, ' ').slice(0, 80);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    let hr = '';
+                    try {
+                        const nm = el.querySelector('.name-text, .geek-name, [class*="name-text"]');
+                        if (nm) hr = (nm.innerText || '').trim();
+                    } catch(e) {}
+                    let wrap = '';
+                    try {
+                        const w = el.querySelector('[class*="name"]:not(.name-text):not(.geek-name)');
+                        if (w) wrap = (w.innerText || '').trim();
+                    } catch(e) {}
+                    if (!hr && wrap) hr = (wrap.split('\\n')[0] || '').trim();
+                    let after = wrap;
+                    if (hr && wrap.startsWith(hr)) after = wrap.slice(hr.length).trim();
+                    let role = '';
+                    let company = after;
+                    const m = ROLE_RE.exec(after);
+                    if (m) {
+                        role = m[0];
+                        company = after.slice(0, m.index).trim();
+                    }
+                    let lastMsg = '';
+                    try {
+                        const lm = el.querySelector('[class*="last"], [class*="msg-text"], [class*="message-text"]');
+                        if (lm) lastMsg = (lm.innerText || '').trim();
+                    } catch(e) {}
+                    lastMsg = lastMsg.replace(/^\\[(送达|已读|未读|发送失败|已发送)\\]\\s*/g, '').trim();
+                    const unreadEl = el.querySelector('.red-dot, [class*="unread"], [class*="badge"]');
+                    const unread = !!(unreadEl && visible(unreadEl));
+                    out.push({
+                        hr_name: hr,
+                        company: company,
+                        role: role,
+                        job_title: '',
+                        last_msg: lastMsg,
+                        unread: unread,
+                        raw: fullText.slice(0, 200),
+                        position: pos++,
+                    });
+                }
+                return out;
+            }"""
+            )
+        except Exception as e:
+            print(f"  [sync-list] DOM 抽取失败: {e}")
+            return 0
+
+        if not cards:
+            return 0
+
+        try:
+            from boss_state import get_db, list_active_conversations
+        except Exception:
+            return 0
+
+        known = {c["hr_name"]: c for c in list_active_conversations() if c.get("hr_name")}
+        updated = 0
+        db = get_db()
+        for c in cards:
+            hr = (c.get("hr_name") or "").strip()
+            if not hr or len(hr) < 2:
+                continue
+            company = (c.get("company") or "").strip()
+            job = (c.get("job_title") or "").strip()
+            last_msg = (c.get("last_msg") or "").strip()
+            kc = known.get(hr)
+            if not kc:
+                continue
+            sets = []
+            args: list = []
+            old_company = (kc.get("hr_company") or "").strip()
+            if company and company != old_company and len(company) >= 2:
+                sets.append("hr_company=?")
+                args.append(company[:80])
+            if job and not kc.get("job_title"):
+                sets.append("job_title=?")
+                args.append(job[:80])
+            old_last = (kc.get("last_message_text") or "").strip()
+            if last_msg and last_msg != old_last:
+                sets.append("last_message_text=?")
+                args.append(last_msg[:200])
+            if not sets:
+                continue
+            sets.append("updated_at=CURRENT_TIMESTAMP")
+            args.append(kc["id"])
+            try:
+                db.execute(f"UPDATE conversations SET {', '.join(sets)} WHERE id=?", tuple(args))
+                updated += 1
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            pass
+        if updated:
+            print(f"  [sync-list] 回填 {updated} 个会话字段")
+        return updated
+
     def run_chat_monitor_cycle(self) -> dict:
         """
         一个完整的监控周期:
@@ -1868,17 +2006,16 @@ class BossAutomation(BossScraper):
             if not self.navigate_to_chat():
                 print("  [监控] 导航到聊天页失败")
                 return result
-        else:
-            # 已在聊天页，轻量点击「未读」Tab 即可
-            for sel in ['span.label-name:has-text("未读")', '.label-name:has-text("未读")']:
-                try:
-                    tab = self.page.locator(sel).first
-                    if tab.is_visible():
-                        tab.click()
-                        pause(0.5, 1)
-                        break
-                except Exception:
-                    pass
+
+        # 先在「全部」Tab 下抓一次完整列表，回填 company/job_title/last_msg（修 P10 漏字段）
+        try:
+            self.sync_conversation_list_full()
+        except Exception as e:
+            print(f"  [监控] sync_conversation_list_full 异常: {e}")
+
+        # 切到「未读」Tab 处理待回复会话
+        if not need_nav:
+            self._click_chat_tab("未读")
 
         if not self.check_page_safety():
             print("  [监控] 安全检查未通过（登录过期/验证码等）")
@@ -2233,17 +2370,13 @@ class BossAutomation(BossScraper):
                     pause(0.3, 0.5)
             except Exception:
                 pass
-            # 重新切「未读」Tab，刷新侧边栏列表（BOSS 可能已把刚才的会话标记为已读移出列表）
-            for sel in ['span.label-name:has-text("未读")', '.label-name:has-text("未读")']:
-                try:
-                    tab = self.page.locator(sel).first
-                    if tab.is_visible():
-                        tab.click()
-                        pause(0.5, 1)
-                        break
-                except Exception:
-                    pass
             pause(0.5, 1)
+
+        # 监控循环结束后切回「全部」Tab，避免 BOSS 页面长期停留在未读视图（P09）
+        try:
+            self._click_chat_tab("全部")
+        except Exception:
+            pass
 
         print(f"  [监控] 本轮完成: 消息 {result['new_messages']}, 回复 {result['replies_sent']}")
         return result

@@ -760,24 +760,30 @@ async def test_selector(req: SelectorTest):
     """测试任意 CSS 选择器，返回匹配元素数和文本。"""
     if not automation or automation.page is None:
         raise HTTPException(status_code=503, detail="浏览器未启动")
-    result = await _run_pw(
-        lambda: automation.page.evaluate(
-            """(sel) => {
-            try {
-                const els = document.querySelectorAll(sel);
-                const items = [];
-                for (let i = 0; i < Math.min(els.length, 10); i++) {
-                    items.push((els[i].innerText || '').trim().substring(0, 200));
+    try:
+        result = await asyncio.wait_for(
+            _run_pw(
+                lambda: automation.page.evaluate(
+                    """(sel) => {
+                try {
+                    const els = document.querySelectorAll(sel);
+                    const items = [];
+                    for (let i = 0; i < Math.min(els.length, 10); i++) {
+                        items.push((els[i].innerText || '').trim().substring(0, 200));
+                    }
+                    return {count: els.length, samples: items};
+                } catch(e) {
+                    return {error: e.message};
                 }
-                return {count: els.length, samples: items};
-            } catch(e) {
-                return {error: e.message};
-            }
-        }""",
-            req.selector,
+            }""",
+                    req.selector,
+                )
+            ),
+            timeout=8.0,
         )
-    )
-    return result
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "browser_busy", "detail": "浏览器线程繁忙（监控/搜索占用），稍后重试"}
 
 
 @app.get("/api/debug/page-stats")
@@ -785,26 +791,30 @@ async def page_stats():
     """返回当前页面 DOM 统计，帮助诊断选择器失效。"""
     if not automation or automation.page is None:
         raise HTTPException(status_code=503, detail="浏览器未启动")
-    result = await _run_pw(
-        lambda: automation.page.evaluate("""() => {
-        const stats = {};
-        stats.url = window.location.href;
-        stats.title = document.title;
-        stats.bodyLength = (document.body?.innerText || '').length;
-        // 关键元素计数
-        stats.liCount = document.querySelectorAll('li').length;
-        stats.inputCount = document.querySelectorAll('input, textarea, [contenteditable]').length;
-        stats.buttonCount = document.querySelectorAll('button').length;
-        stats.messageItems = document.querySelectorAll('li.message-item, [class*="message-item"]').length;
-        stats.listItems = document.querySelectorAll('li[role="listitem"]').length;
-        stats.chatInput = document.querySelector('#chat-input') ? 1 : 0;
-        stats.sendButton = document.querySelector('button[type="send"]') ? 1 : 0;
-        // body 前 500 字符
-        stats.bodyPreview = (document.body?.innerText || '').substring(0, 500);
-        return stats;
-    }""")
-    )
-    return result
+    try:
+        result = await asyncio.wait_for(
+            _run_pw(
+                lambda: automation.page.evaluate("""() => {
+            const stats = {};
+            stats.url = window.location.href;
+            stats.title = document.title;
+            stats.bodyLength = (document.body?.innerText || '').length;
+            stats.liCount = document.querySelectorAll('li').length;
+            stats.inputCount = document.querySelectorAll('input, textarea, [contenteditable]').length;
+            stats.buttonCount = document.querySelectorAll('button').length;
+            stats.messageItems = document.querySelectorAll('li.message-item, [class*="message-item"]').length;
+            stats.listItems = document.querySelectorAll('li[role="listitem"]').length;
+            stats.chatInput = document.querySelector('#chat-input') ? 1 : 0;
+            stats.sendButton = document.querySelector('button[type="send"]') ? 1 : 0;
+            stats.bodyPreview = (document.body?.innerText || '').substring(0, 500);
+            return stats;
+        }""")
+            ),
+            timeout=8.0,
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "browser_busy", "detail": "浏览器线程繁忙，稍后重试"}
 
 
 @app.get("/api/debug/selectors-status")
@@ -814,28 +824,34 @@ async def selectors_status():
         raise HTTPException(status_code=503, detail="浏览器未启动")
     from boss_automation import SELECTORS
 
-    result = await _run_pw(
-        lambda: automation.page.evaluate(
-            """(groups) => {
-            const res = {};
-            for (const [key, sels] of Object.entries(groups)) {
-                for (const sel of sels) {
-                    try {
-                        const count = document.querySelectorAll(sel).length;
-                        if (count > 0) {
-                            res[key] = {selector: sel, count: count, ok: true};
-                            break;
-                        }
-                    } catch(e) {}
+    try:
+        result = await asyncio.wait_for(
+            _run_pw(
+                lambda: automation.page.evaluate(
+                    """(groups) => {
+                const res = {};
+                for (const [key, sels] of Object.entries(groups)) {
+                    for (const sel of sels) {
+                        try {
+                            const count = document.querySelectorAll(sel).length;
+                            if (count > 0) {
+                                res[key] = {selector: sel, count: count, ok: true};
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!res[key]) res[key] = {selector: sels[sels.length-1], count: 0, ok: false};
                 }
-                if (!res[key]) res[key] = {selector: sels[sels.length-1], count: 0, ok: false};
-            }
-            return res;
-        }""",
-            SELECTORS,
+                return res;
+            }""",
+                    SELECTORS,
+                )
+            ),
+            timeout=10.0,
         )
-    )
-    return result
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "browser_busy", "detail": "浏览器线程繁忙（监控/搜索占用），稍后重试"}
 
 
 # ══════════════════════════════════════
@@ -1814,6 +1830,22 @@ def list_conversations():
     return {"conversations": convs}
 
 
+@app.post("/api/conversations/sync-list")
+async def sync_conversation_list():
+    """手动触发：在「全部」Tab 下抽取每张会话卡的 company / job_title / last_msg 并写回 DB。
+    台账 P10 修复入口。
+    """
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动")
+    try:
+        updated = await asyncio.wait_for(_run_pw(automation.sync_conversation_list_full), timeout=15.0)
+        return {"success": True, "updated": int(updated or 0)}
+    except asyncio.TimeoutError:
+        return {"success": False, "error": "browser_busy", "detail": "浏览器线程繁忙，稍后重试"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步失败: {e}")
+
+
 @app.get("/api/conversations/{conv_id}")
 def get_conversation_detail(conv_id: int):
     conv = get_conversation(conv_id)
@@ -2004,13 +2036,11 @@ async def debug_auth():
 
 @app.get("/api/geo/districts")
 async def geo_districts(city: str, force: bool = False):
-    """某城市下的区/县级列表。用浏览器内置 fetch 获取。"""
+    """某城市下的区/商圈列表。优先直连 BOSS 公开接口，失败时回退浏览器 fetch。"""
     if not city:
         raise HTTPException(status_code=400, detail="缺少 city 参数")
-    if not automation or not automation.page:
-        raise HTTPException(status_code=503, detail="浏览器未启动")
     try:
-        from boss_geo import resolve_city_code, _parse_districts, _cache
+        from boss_geo import resolve_city_code, _parse_districts, _cache, get_districts
         import time as _time
 
         city_code = resolve_city_code(city)
@@ -2023,25 +2053,39 @@ async def geo_districts(city: str, force: bool = False):
             if cached and (_time.time() - ts) < _cache["ttl_sec"]:
                 return {"city": city, "city_code": city_code, "districts": cached}
 
+        try:
+            districts = await asyncio.wait_for(
+                asyncio.to_thread(get_districts, city_code, force),
+                timeout=6.0,
+            )
+            if districts:
+                return {"city": city, "city_code": city_code, "districts": districts}
+        except asyncio.TimeoutError:
+            districts = []
+        except Exception:
+            districts = []
+
+        if not (automation and automation.page):
+            cached = _cache["districts"].get(city_code) or []
+            return {"city": city, "city_code": city_code, "districts": cached}
+
         def _fetch():
             try:
                 url = f"https://www.zhipin.com/wapi/zpgeek/businessDistrict.json?cityCode={city_code}"
-                result = automation.page.evaluate(
+                return automation.page.evaluate(
                     "async (url) => { try { const r = await fetch(url); return await r.json(); } catch(e) { return {code: -1, error: String(e)}; } }",
                     url,
                 )
-                return result
             except Exception as e:
                 print(f"[DEBUG geo] _fetch exception: {e}")
                 return None
 
-        raw = await asyncio.wait_for(_run_pw(_fetch), timeout=15.0)
+        raw = await asyncio.wait_for(_run_pw(_fetch), timeout=10.0)
 
         if not raw or raw.get("code") != 0:
             cached = _cache["districts"].get(city_code)
             return {"city": city, "city_code": city_code, "districts": cached or []}
 
-        # raw 可能是 {source:..., data:...} 格式（DOM回退），也可能是标准 {code:0, zpData:...}
         if isinstance(raw, dict) and raw.get("source") and isinstance(raw.get("data"), list):
             items = raw["data"]
             districts = [{"name": d.get("name", ""), "code": str(d.get("code", ""))} for d in items if d.get("name")]

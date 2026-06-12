@@ -121,24 +121,32 @@ def _parse_cities(data: dict) -> Tuple[List[dict], Dict[str, str], Dict[str, str
     cities: List[dict] = []
     by_name: Dict[str, str] = {}
     by_code: Dict[str, str] = {}
+    seen_codes: set = set()
 
-    def walk(node: Any):
+    def add_city(node: Any) -> None:
         if not isinstance(node, dict):
             return
         code = str(node.get("code") or "")
         name = node.get("name")
-        if code and name:
-            cities.append({"name": name, "code": code})
-            # 后取同名覆盖（保留首个出现）
-            by_name.setdefault(name, code)
-            by_code.setdefault(code, name)
-        sub = node.get("subLevelModelList")
-        if isinstance(sub, list):
-            for x in sub:
-                walk(x)
+        if not (code and name) or code in seen_codes:
+            return
+        seen_codes.add(code)
+        cities.append({"name": name, "code": code})
+        by_name.setdefault(name, code)
+        by_code.setdefault(code, name)
 
-    for top in (data.get("data") or {}).get("cityList") or []:
-        walk(top)
+    root = data.get("zpData") or data.get("data") or {}
+    for top in root.get("hotCityList") or []:
+        add_city(top)
+    for province in root.get("cityList") or []:
+        if not isinstance(province, dict):
+            continue
+        sub = province.get("subLevelModelList")
+        if isinstance(sub, list) and sub:
+            for city in sub:
+                add_city(city)
+        else:
+            add_city(province)
     return cities, by_name, by_code
 
 
@@ -148,10 +156,19 @@ def get_cities(force: bool = False, cookie_str: str = "") -> List[dict]:
         return _cache["cities"]
 
     raw = _http_json(CITY_URL, cookie_str=cookie_str)
-    if not raw or raw.get("code") != 0:
-        return _cache["cities"]  # 失败时返回旧缓存（可能为空）
+    cities: List[dict] = []
+    by_name: Dict[str, str] = {}
+    by_code: Dict[str, str] = {}
+    if raw and raw.get("code") == 0:
+        cities, by_name, by_code = _parse_cities(raw)
 
-    cities, by_name, by_code = _parse_cities(raw)
+    if not cities:
+        if _cache["cities"]:
+            return _cache["cities"]
+        cities = [{"name": n, "code": c} for n, c in _CITY_MAP_FALLBACK.items()]
+        by_name = dict(_CITY_MAP_FALLBACK)
+        by_code = {c: n for n, c in _CITY_MAP_FALLBACK.items()}
+
     _cache["cities"] = cities
     _cache["city_by_name"] = by_name
     _cache["city_by_code"] = by_code

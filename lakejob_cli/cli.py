@@ -1,6 +1,7 @@
 """lakejob CLI — BOSS直聘岗位雷达命令行工具."""
 
 import json
+import os
 import sys
 import click
 
@@ -263,13 +264,43 @@ def restart_cmd(port):
 
 
 def _kill_boss_app():
-    """用 wmic 精确杀死所有 boss_app 进程，不动其他 python。返回杀死数。"""
-    import subprocess
-
+    """精确杀死所有 boss_app.py 主进程（python 解释器执行 boss_app.py 的）。
+    只匹配 cmdline 中包含 'boss_app.py' 的 python 进程，避免误杀任何包含 'boss_app' 字样的 shell。
+    返回杀死数。
+    """
     killed = 0
     try:
+        import psutil  # type: ignore
+    except Exception:
+        psutil = None
+
+    if psutil is not None:
+        my_pid = os.getpid()
+        for p in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                pid = p.info.get("pid")
+                if pid == my_pid:
+                    continue
+                cmd = p.info.get("cmdline") or []
+                if not isinstance(cmd, list):
+                    continue
+                name = (p.info.get("name") or "").lower()
+                if "python" not in name and not any("python" in (a or "").lower() for a in cmd[:1]):
+                    continue
+                if not any("boss_app.py" in (a or "") for a in cmd):
+                    continue
+                p.kill()
+                killed += 1
+            except Exception:
+                continue
+        return killed
+
+    # 兜底：用 wmic（旧 Windows 系统），但限定 commandline 必须含 boss_app.py
+    import subprocess
+
+    try:
         r = subprocess.run(
-            "wmic process where \"commandline like '%boss_app%'\" get processid",
+            "wmic process where \"name='python.exe' and commandline like '%%boss_app.py%%'\" get processid",
             capture_output=True,
             shell=True,
             text=True,
@@ -277,7 +308,7 @@ def _kill_boss_app():
         )
         for line in r.stdout.split("\n"):
             line = line.strip()
-            if line.isdigit():
+            if line.isdigit() and int(line) != os.getpid():
                 try:
                     subprocess.run(f"taskkill /F /PID {line}", capture_output=True, shell=True, timeout=5)
                     killed += 1
