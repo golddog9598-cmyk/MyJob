@@ -14,6 +14,12 @@ boss_data.db
 *.db-shm
 *.db-wal
 
+# Runtime artifacts
+*.log
+boss_page.html
+search_result.json
+NUL
+
 # Secrets — never commit
 *.pem
 *.key
