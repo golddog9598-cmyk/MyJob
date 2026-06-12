@@ -451,6 +451,18 @@ class BossScraper:
         if self._pw:
             self._pw.stop()
 
+    def _save_state(self):
+        """持久化浏览器 cookie / localStorage 到文件，防止关窗丢失登录态。"""
+        try:
+            if not self._ctx:
+                return
+            state = self._ctx.storage_state()
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False)
+        except Exception:
+            pass
+
     def _body_text(self, limit=1500):
         try:
             return self.page.inner_text("body")[:limit]
@@ -464,13 +476,15 @@ class BossScraper:
         except Exception:
             url = ""
 
+        # 只看路径，不看 query 参数
+        url_path = url.split("?")[0] if url else ""
         explicit_login_paths = (
             "/web/user/",
             "/login/",
-            "ka=header-login",
-            "login?redirect=",
+            "/passport/",
+            "security.html",
         )
-        if any(path in url for path in explicit_login_paths):
+        if any(path in url_path for path in explicit_login_paths):
             return True
 
         body = self._body_text(4000)
@@ -572,15 +586,14 @@ class BossScraper:
                 print("✅ 登录成功")
                 logged_in = True
                 break
+            if "security" in url or "passport" in url:
+                print("⚠️ 检测到安全验证页面，请在浏览器中完成验证")
             last = url
             if i > 0 and i % 30 == 0:
                 print("  ⏳ %ds" % i)
         if not logged_in:
             raise TimeoutError("扫码登录超时或未确认进入已登录页面")
-        state = self._ctx.storage_state()
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False)
+        self._save_state()
         print("✅ 登录状态已保存")
 
         # 预热：导航到聊天页验证 session 稳定性，确保 token 生效
@@ -596,13 +609,17 @@ class BossScraper:
 
     # ── 搜索列表页 ──
 
-    def search(self, keyword, city_code="100010000", districts=None, district="", company_size=None):
+    def search(self, keyword, city_code="100010000", districts=None, district="", company_size=None, areas=None):
         """搜索关键词，返回岗位列表。
 
         参数：
           - districts: 多区列表（推荐）。元素可传区名（如"增城区"）或区 code（如"440118"）。
             后端调用 boss_geo 解析为区 code 后拼成 multiBusinessDistrict=a&multiBusinessDistrict=b
             （BOSS URL 用重复参数表示多区）。
+          - areas: 多工作区域列表（如淄博→["张店区", "临淄区"]）。
+            拼成 multiAreaDistrict=张店区&multiAreaDistrict=临淄区
+            （BOSS 用重复参数表示多区域，值是区名本身）。
+          - district: 单区字符串（兼容旧接口）。如果同时传了 districts，则忽略。
           - district: 单区字符串（兼容旧接口）。如果同时传了 districts，则忽略。
           - company_size: 公司规模过滤。可传：
               * None / "" / []：不拼 scale
@@ -662,7 +679,7 @@ class BossScraper:
             except Exception:
                 resolve_district_code = None  # type: ignore
             for ds in district_inputs:
-                if ds.isdigit() and len(ds) >= 6:
+                if ds.isdigit() and len(ds) >= 3:
                     if ds not in district_codes:
                         district_codes.append(ds)
                     continue
@@ -678,18 +695,63 @@ class BossScraper:
         for dc in district_codes:
             params.append(f"multiBusinessDistrict={dc}")
 
+        # 处理「工作区域」（如淄博→张店区/临淄区）
+        # BOSS 把工作区域和商圈合并到同一个 multiBusinessDistrict 参数里(6 位 code=行政区域,4-8 位=商圈)
+        # 所以这里把 areas 解析为 code 后合并到 district_codes,统一走 multiBusinessDistrict
+        area_inputs: list[str] = []
+        if areas:
+            if isinstance(areas, (list, tuple, set)):
+                area_inputs = [str(a).strip() for a in areas if a]
+            else:
+                s = str(areas).strip()
+                area_inputs = [x.strip() for x in s.split(",") if x.strip()] if s else []
+        if area_inputs:
+            try:
+                from boss_geo import resolve_area_code
+
+                for an in area_inputs:
+                    code = resolve_area_code(city_code, an) or an
+                    if code and code not in district_codes:
+                        district_codes.append(code)
+            except Exception:
+                for an in area_inputs:
+                    if an and an not in district_codes:
+                        district_codes.append(an)
+
         url = "https://www.zhipin.com/web/geek/job?" + "&".join(params)
-        self.page.goto(url, wait_until="load", timeout=45000)
+        try:
+            self.page.goto(url, wait_until="networkidle", timeout=30000)
+        except Exception:
+            pass  # Boss 可能先跳安全页再跳回来导致 interrupted，忽略
+
+        # 检查最终着陆页 — 只在真正掉到 passport/login 时才报错
+        current_url = self.page.url
+        if "/passport/" in current_url or "/login" in current_url.split("?")[0]:
+            raise RuntimeError(f"BOSS 重定向到安全/登录页: {current_url}\n请先在浏览器中完成安全验证/登录。")
+        if self._login_prompt_visible():
+            raise RuntimeError("登录态已过期，请重新登录。")
+
         pause(3, 5)
         self._scroll_all()
 
         # 优先：列表 XHR 拉取 + 详情 XHR 补全（拿 JD/真实 HR 名/可投递权限）
-        xhr_jobs = self._fetch_jobs_via_xhr(keyword, city_code, district_codes, scale_codes, max_pages=1)
+        xhr_jobs = self._fetch_jobs_via_xhr(
+            keyword, city_code, district_codes, scale_codes, max_pages=1, area_names=area_inputs
+        )
         if xhr_jobs:
+            # 收集本次结果中的工作区域到缓存,供 UI 下次使用
+            try:
+                from boss_geo import collect_areas_from_jobs
+
+                collect_areas_from_jobs(city_code, xhr_jobs)
+            except Exception:
+                pass
+            self._save_state()
             return xhr_jobs
 
         dom_jobs = self._extract_job_cards()
         if dom_jobs:
+            self._save_state()
             return dom_jobs
 
         lines = [l.strip() for l in self.page.inner_text("body").split("\n") if l.strip()]
@@ -831,15 +893,52 @@ class BossScraper:
                     // HR: extract from card
                     let hrName = '';
                     let hrTitle = '';
-                    const hrEl = card.querySelector('[class*="info-public"], [class*="job-info"], [class*="hr-"], [class*="recruiter"]');
+                    // 1) 尝试多种选择器
+                    const hrEl = card.querySelector('[class*="info-public"], [class*="job-info"], [class*="hr-"], [class*="recruiter"], [class*="boss-name"], [class*="boss-title"], [class*="publisher"], [class*="boss-info"]');
                     let hrText = hrEl ? (hrEl.innerText || '').trim() : '';
+                    // 2) 选择器没命中 → 从所有子元素找含HR关键词的元素
                     if (!hrText) {
-                        hrText = lines.find(x => /^[一-龥]{2,4}[\s·•·]+/.test(x) && /人事|招聘|经理|主管|总监|HRBP|HR|负责人|助理|专员|猎头|顾问/.test(x)) || '';
+                        const hrKeywords = ['人事','招聘','经理','主管','总监','HRBP','HR','负责人','助理','专员','猎头','顾问','HR','招聘者'];
+                        for (const el of card.querySelectorAll('*')) {
+                            const t = (el.innerText || '').trim();
+                            if (t.length > 1 && t.length < 50 && hrKeywords.some(k => t.includes(k))) {
+                                // 排除太长的文本（可能是整个卡片）
+                                if (t.split(/\\n/).length <= 3) { hrText = t; break; }
+                            }
+                        }
+                    }
+                    // 3) 从文本行中正则匹配
+                    if (!hrText) {
+                        hrText = lines.find(x => /^[一-龥]{2,4}[\\s·•·]+/.test(x) && /人事|招聘|经理|主管|总监|HRBP|HR|负责人|助理|专员|猎头|顾问/.test(x)) || '';
+                    }
+                    // 4) 尝试匹配 "XXX·YYY" 或 "XXX YYY" 格式（HR名字·职位）
+                    if (!hrText) {
+                        for (const line of lines) {
+                            const m = line.match(/^([一-龥]{2,4})[·•\\s]+(.{2,20})$/);
+                            if (m && !/经验|应届|在校|不限|学历|本科|硕士|博士|大专|中专|高中|K|元|月薪|年薪/.test(line)) {
+                                hrText = line; break;
+                            }
+                        }
+                    }
+                    // 5) 最后兜底：找含"立即沟通"附近的文字
+                    if (!hrText) {
+                        for (const el of card.querySelectorAll('[class*="btn"], [class*="chat"], [class*="start-chat"]')) {
+                            const parent = el.parentElement;
+                            if (parent) {
+                                const sibs = parent.querySelectorAll(':scope > *');
+                                for (const s of sibs) {
+                                    const t = (s.innerText || '').trim();
+                                    if (t && t !== (s.textContent||'').trim() && t.length < 30 && /[一-龥]{2,4}/.test(t)) {
+                                        hrText = t; break;
+                                    }
+                                }
+                            }
+                        }
                     }
                     if (hrText) {
-                        const hm = hrText.match(/^([一-龥]{2,4})\s*[·•·\s]\s*(.+)$/);
+                        const hm = hrText.match(/^([一-龥]{2,4})[\\s·•·]+(.+)$/);
                         if (hm) { hrName = hm[1]; hrTitle = hm[2].trim(); }
-                        else { hrName = hrText.substring(0, 4).replace(/[·•\s]/g, ''); }
+                        else { hrName = hrText.substring(0, 4).replace(/[·•\\s]/g, ''); }
                     }
                     if (title && salary) {
                         seen.add(href);
@@ -875,6 +974,11 @@ class BossScraper:
                     "description": "",
                     "hr_name": (row.get("hr_name") or "").strip(),
                     "hr_title": (row.get("hr_title") or "").strip(),
+                    "hr_active": "",
+                    "company_size": "",
+                    "industry": "",
+                    "area_district": "",
+                    "business_district": "",
                 }
             )
         return jobs
@@ -884,15 +988,19 @@ class BossScraper:
     # ══════════════════════════════════════
 
     def _extract_zp_headers(self) -> dict:
-        """从当前页面提取 BOSS 接口所需的 zp_token / token。失败时返回空 dict。"""
+        """从当前页面提取 BOSS 接口所需的 zp_token / token。失败时返回空 dict。
+
+        三路提取：
+        1) JS 全局对象 (window.zpToken / window.token)
+        2) document.cookie 中的 bst / __a
+        3) Playwright context cookies（处理 HttpOnly cookie 场景）
+        """
+        result = {}
         try:
-            return (
+            result = (
                 self.page.evaluate(
                     r"""
                 () => {
-                    function pick(obj, key) {
-                        try { return obj && obj[key]; } catch (e) { return ''; }
-                    }
                     // 1) 全局对象
                     let zp_token = '', token = '';
                     for (const k of Object.keys(window)) {
@@ -904,7 +1012,7 @@ class BossScraper:
                             }
                         } catch (e) {}
                     }
-                    // 2) Cookie 衍生
+                    // 2) Cookie
                     if (!zp_token) {
                         const m = document.cookie.match(/(?:^|;\s*)bst=([^;]+)/);
                         if (m) zp_token = decodeURIComponent(m[1]);
@@ -920,7 +1028,25 @@ class BossScraper:
                 or {}
             )
         except Exception:
-            return {}
+            result = {}
+
+        # 3) 回退：通过 Playwright context cookies 提取（处理 HttpOnly）
+        if not result.get("zp_token") or not result.get("token"):
+            try:
+                all_cookies = self._ctx.cookies()
+                cookie_map = {c["name"]: c["value"] for c in all_cookies if c.get("name")}
+                if not result.get("zp_token"):
+                    zp = cookie_map.get("bst") or cookie_map.get("__zp_stoken__") or ""
+                    if zp:
+                        result["zp_token"] = zp
+                if not result.get("token"):
+                    t = cookie_map.get("__a", "")
+                    if t:
+                        result["token"] = t.split(".")[0] if "." in t else t
+            except Exception:
+                pass
+
+        return result
 
     def _fetch_jobs_via_xhr(
         self,
@@ -929,6 +1055,7 @@ class BossScraper:
         district_codes: list,
         scale_codes: list,
         max_pages: int = 1,
+        area_names: list = None,
     ) -> list:
         """通过 BOSS XHR 抓取岗位列表 + 详情。
 
@@ -942,14 +1069,13 @@ class BossScraper:
             headers = self._extract_zp_headers()
             zp_token = headers.get("zp_token") or ""
             token = headers.get("token") or ""
-            if not zp_token:
-                return []
 
-            list_headers = {
+            detail_headers = {
                 "zp_token": zp_token,
                 "token": token,
                 "X-Requested-With": "XMLHttpRequest",
                 "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json, text/plain, */*",
                 "Origin": "https://www.zhipin.com",
                 "Referer": self.page.url,
                 "User-Agent": (
@@ -957,13 +1083,11 @@ class BossScraper:
                     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
             }
-            detail_headers = dict(list_headers)
-            detail_headers["Accept"] = "application/json, text/plain, */*"
 
             all_jobs: list = []
-            for page in range(1, max_pages + 1):
+            for page_num in range(1, max_pages + 1):
                 form: dict = {
-                    "page": str(page),
+                    "page": str(page_num),
                     "pageSize": "15",
                     "city": str(city_code),
                     "query": keyword or "",
@@ -979,27 +1103,45 @@ class BossScraper:
                     "scene": "1",
                     "encryptExpectId": "",
                 }
-                for dc in district_codes or []:
-                    form["multiBusinessDistrict"] = str(dc)
                 if scale_codes:
                     form["scale"] = ",".join(str(s) for s in scale_codes)
 
+                # multiBusinessDistrict 需要在 URL querystring 中重复出现
+                import urllib.parse as _urlparse
+
+                _ts = int(time.time() * 1000)
+                _qs_parts = [f"_={_ts}"]
+                for dc in district_codes or []:
+                    _qs_parts.append(f"multiBusinessDistrict={_urlparse.quote(str(dc))}")
+                for an in area_names or []:
+                    _qs_parts.append(f"multiAreaDistrict={_urlparse.quote(str(an))}")
+                _post_url = "https://www.zhipin.com/wapi/zpgeek/search/joblist.json?" + "&".join(_qs_parts)
+
+                # 浏览器内 fetch（自动带 cookie/referer，避免风控 code 37）
+                _form_body = "&".join(f"{_urlparse.quote(str(k))}={_urlparse.quote(str(v))}" for k, v in form.items())
+                _fetch_js = (
+                    """async () => {
+                    const r = await fetch("""
+                    + json.dumps(_post_url)
+                    + """, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest"},
+                        body: """
+                    + json.dumps(_form_body)
+                    + """,
+                        credentials: "include"
+                    });
+                    return await r.json();
+                }"""
+                )
                 try:
-                    r = self.page.request.post(
-                        "https://www.zhipin.com/wapi/zpgeek/search/joblist.json",
-                        form=form,
-                        headers=list_headers,
-                        timeout=20,
-                    )
-                except Exception:
-                    return []
-                try:
-                    payload = r.json()
+                    payload = self.page.evaluate(_fetch_js)
                 except Exception:
                     return []
                 if not isinstance(payload, dict) or payload.get("code") != 0:
                     return []
                 job_list = (payload.get("zpData") or {}).get("jobList") or []
+
                 if not job_list:
                     break
 
@@ -1021,24 +1163,41 @@ class BossScraper:
                         if j.get("encryptJobId")
                         else "",
                         "description": "",
-                        "hr_name": "",
-                        "hr_title": "",
+                        "hr_name": j.get("bossName") or j.get("hrName") or (j.get("bossInfo") or {}).get("name") or "",
+                        "hr_title": j.get("bossTitle")
+                        or j.get("hrTitle")
+                        or (j.get("bossInfo") or {}).get("title")
+                        or "",
                         "security_id": security_id,
                         "lid": lid,
                         "encrypt_job_id": j.get("encryptJobId", ""),
                         "encrypt_brand_id": j.get("encryptBrandId", ""),
                         "encrypt_boss_id": j.get("encryptBossId", ""),
+                        "hr_active": (
+                            ("在线" if j.get("bossOnline") is True else "")
+                            or j.get("activeTimeDesc")
+                            or (j.get("bossInfo") or {}).get("activeTimeDesc")
+                            or ""
+                        ),
+                        "legal_rep": "",
                     }
-                    # 详情：拿 JD 和真实 HR 名
+                    # 详情：拿 JD 补充（浏览器内 fetch，避免风控）
                     if security_id and lid:
                         try:
-                            r2 = self.page.request.get(
-                                "https://www.zhipin.com/wapi/zpgeek/job/detail.json",
-                                params={"securityId": security_id, "lid": lid},
-                                headers=detail_headers,
-                                timeout=15,
+                            _detail_url = f"https://www.zhipin.com/wapi/zpgeek/job/detail.json?securityId={_urlparse.quote(security_id)}&lid={_urlparse.quote(lid)}"
+                            p2 = self.page.evaluate(
+                                """async () => {
+                                try {
+                                    const r = await fetch("""
+                                + json.dumps(_detail_url)
+                                + """, {
+                                        headers: {"X-Requested-With": "XMLHttpRequest"},
+                                        credentials: "include"
+                                    });
+                                    return await r.json();
+                                } catch(e) { return {}; }
+                            }"""
                             )
-                            p2 = r2.json() if r2.status_code == 200 else {}
                         except Exception:
                             p2 = {}
                         if isinstance(p2, dict) and p2.get("code") == 0:
@@ -1050,12 +1209,17 @@ class BossScraper:
                             item["description"] = ji.get("postDescription", "") or ""
                             item["hr_name"] = bi.get("name", "") or ""
                             item["hr_title"] = bi.get("title", "") or ""
+                            item["hr_active"] = bi.get("activeTimeDesc", "") or ""
+                            # detail API的activeTimeDesc更准确，直接取即可；无detail时用搜索结果的兜底
                             if not item["company"]:
                                 item["company"] = bc.get("brandName", "") or ""
                             if not item["company_size"]:
                                 item["company_size"] = bc.get("scaleName", "") or ""
                             if not item["industry"]:
                                 item["industry"] = bc.get("industryName", "") or ""
+                            _legal = bc.get("legalPerson") or bc.get("legalPersonName") or ""
+                            if _legal and not item.get("legal_rep"):
+                                item["legal_rep"] = _legal
                             item["encrypt_brand_id"] = bc.get("encryptBrandId", "") or item["encrypt_brand_id"]
                             item["can_send_resume"] = bool(ok.get("canSendResume", False))
                             item["can_send_wechat"] = bool(ok.get("canSendWechat", False))

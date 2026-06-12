@@ -252,6 +252,7 @@ def generate_greeting_ai(
     is_boss: bool = False,
     style: str = "professional",
     resume_summary: str = "",
+    optimize_hints: str = "",
     timeout: float = 15.0,
 ) -> str:
     """用 LLM 生成个性化打招呼语；任何失败都回退到模板版 generate_greeting。
@@ -263,14 +264,23 @@ def generate_greeting_ai(
       - 其他 / 关闭 AI 招呼：使用通用自然风格。
     """
     # 设置里可关闭 AI 招呼
-    if get_setting("ai_greeting_enabled", "true") != "true":
+    ai_greeting_on = get_setting("ai_greeting_enabled", "true")
+    greeting_mode_dbg = get_setting("greeting_mode", "template")
+    print(
+        f"[greeting] job={job_title!r} company={company!r} hr={hr_name!r} "
+        f"ai_enabled={ai_greeting_on!r} mode={greeting_mode_dbg!r} "
+        f"has_desc={bool(job_desc)} desc_len={len(job_desc or '')}"
+    )
+    if ai_greeting_on != "true":
+        print(f"[greeting] → 模板 (ai_greeting_enabled={ai_greeting_on!r})")
         return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
     if not job_title and not company:
+        print("[greeting] → 模板 (缺少 job_title 和 company)")
         return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
     try:
-        greeting_mode = get_setting("greeting_mode", "template")
+        greeting_mode = greeting_mode_dbg
         style_hint = {
             "professional": "语气正式专业",
             "casual": "语气轻松友好",
@@ -279,30 +289,36 @@ def generate_greeting_ai(
 
         if greeting_mode == "smart":
             system_prompt, user_prompt = _build_smart_prompts(
-                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint
+                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint, optimize_hints
             )
+            print(f"[greeting] → smart 模式 prompt 长度 sys={len(system_prompt)} user={len(user_prompt)}")
         else:
             system_prompt = GREETING_SYSTEM_PROMPT
             user_prompt = _build_generic_prompt(
-                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint
+                job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint, optimize_hints
             )
+            print(f"[greeting] → generic 模式 prompt 长度 sys={len(system_prompt)} user={len(user_prompt)}")
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
+        print(f"[greeting] → 调用 LLM ...")
         raw = llm_chat_deepseek(messages, temperature=0.8)
         text = (raw or "").strip().strip('"').strip("'").strip()
         # 去掉模型可能多输出的前缀
         text = re.sub(r"^(招呼语|打招呼语|回复)[:：]\s*", "", text)
+        print(f"[greeting] LLM 返回长度={len(text)} 预览={text[:80]!r}")
 
         # 质量校验：太短/太长/含联系方式 → 回退模板
         if not text or len(text) < 6:
+            print(f"[greeting] → 模板 (LLM 返回太短 len={len(text)})")
             return generate_greeting(job_title, company, style=style, hr_name=hr_name)
         if len(text) > 220:
             text = text[:220]
         if re.search(r"微信|wechat|vx|\bv信\b|qq|电话|手机号|\d{11}", text, re.I):
+            print(f"[greeting] → 模板 (含联系方式被拦截)")
             return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
         # smart 模式额外校验：占位符未替换完 → 回退
@@ -318,7 +334,9 @@ def generate_greeting_ai(
         return generate_greeting(job_title, company, style=style, hr_name=hr_name)
 
 
-def _build_generic_prompt(job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint):
+def _build_generic_prompt(
+    job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint, optimize_hints=""
+):
     parts = [
         f"招聘公司: {company or '未知'}",
         f"岗位名称: {job_title or '未知'}",
@@ -329,28 +347,31 @@ def _build_generic_prompt(job_title, company, hr_name, job_desc, is_boss, resume
         parts.append(f"岗位JD（节选）: {job_desc[:400]}")
     if resume_summary:
         parts.append(f"我的简历摘要: {resume_summary[:300]}")
+    if optimize_hints:
+        parts.append(f"\n=== 简历优化建议（参考这些方向来写招呼语，不要直接提优化简历） ===\n{optimize_hints[:600]}")
     parts.append(f"\n本次风格: {style_hint}")
     parts.append("请生成打招呼语正文：")
     return "\n".join(parts)
 
 
-def _build_smart_prompts(job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint):
+def _build_smart_prompts(job_title, company, hr_name, job_desc, is_boss, resume_summary, style_hint, optimize_hints=""):
     """smart 模式：消费用户在前端填的 smart_greeting_prompt（规则化）。"""
     user_rules = get_setting("smart_greeting_prompt", "")
     if not user_rules.strip():
         user_rules = (
             "规则：\n"
-            "1. 从JD岗位职责中找3个最耗时的痛点/能力\n"
-            "2. 从岗位名提一个词做方向（如AI运营、大模型）\n"
-            "3. 每个痛点不超过8个字\n"
-            "4. 严格按以下格式，不加解释：\n\n"
-            "老板，我的方向是【方向】方向——【能力1】、【能力2】、【能力3】，按效果付费，做不到不拿底薪，聊聊？"
+            "1. 严格从下面的JD中找到3个核心能力要求（不是痛点，是JD里真正要求的能力）\n"
+            "2. 方向必须从JD关键词中提取（如JD写项目管理→方向就是项目管理，JD写AI产品→方向就是AI产品）\n"
+            "3. 每个能力不超过10个字，尽量引用JD原词\n"
+            "4. 严格按以下格式，不要自己编方向，不要加解释：\n\n"
+            "老板，我的方向是【从JD提取的方向词】——【能力1】、【能力2】、【能力3】，按效果付费，做不到不拿底薪，聊聊？"
         )
 
     system_prompt = (
         "你是求职者本人，按下方「用户规则」严格生成一段打招呼语。\n"
         "- 只输出最终招呼语正文一行，不要任何解释、不要引号、不要JSON\n"
         "- 不出现微信/电话/QQ等联系方式（BOSS会拦截）\n"
+        "- 方向和能力必须从下面提供的JD中提取，禁止编造不相关内容\n"
         f"- 称呼：{hr_name or '不带称呼'}\n"
         f"- 风格：{style_hint}\n"
         f"- 是否老板：{'true' if is_boss else 'false'}\n\n"
@@ -365,5 +386,7 @@ def _build_smart_prompts(job_title, company, hr_name, job_desc, is_boss, resume_
         user_prompt_parts.append(f"岗位JD（节选）: {job_desc[:600]}")
     if resume_summary:
         user_prompt_parts.append(f"我的简历摘要: {resume_summary[:300]}")
+    if optimize_hints:
+        user_prompt_parts.append(f"简历优化提示（参考这些方向提取能力关键词）:\n{optimize_hints[:400]}")
     user_prompt_parts.append("请按上方规则生成一行招呼语：")
     return system_prompt, "\n".join(user_prompt_parts)

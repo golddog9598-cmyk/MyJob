@@ -81,6 +81,41 @@ monitor_task: Optional[asyncio.Task] = None
 ws_clients: List[WebSocket] = []
 monitor_paused: bool = False
 browser_sync_lock: Optional[asyncio.Lock] = None
+_cached_zp_headers: dict = {}  # zp_token + token + Cookie，geo 端点免 _run_pw
+_HEADERS_CACHE_TTL = 15 * 60  # 15 分钟
+
+
+def _refresh_zp_cache():
+    """在 Playwright executor 中提取 zp_token / token / Cookie 并写入全局缓存。"""
+    global _cached_zp_headers
+    try:
+        auth = {}
+        if hasattr(automation, "_extract_zp_headers"):
+            auth = automation._extract_zp_headers() or {}
+        h = {}
+        if auth.get("zp_token"):
+            h["zp_token"] = auth["zp_token"]
+        if auth.get("token"):
+            h["token"] = auth["token"]
+        try:
+            cookies = automation.page.context.cookies(["https://www.zhipin.com", "https://.zhipin.com"])
+            h["Cookie"] = "; ".join(f"{c['name']}={c['value']}" for c in cookies if c.get("name") and c.get("value"))
+        except Exception:
+            pass
+        h["_ts"] = time.time()
+        _cached_zp_headers = h
+    except Exception:
+        pass
+
+
+def _get_cached_headers() -> Optional[dict]:
+    """返回缓存的鉴权 headers，过期返回 None。"""
+    ts = _cached_zp_headers.get("_ts", 0)
+    if ts and (time.time() - ts) < _HEADERS_CACHE_TTL:
+        out = dict(_cached_zp_headers)
+        out.pop("_ts", None)
+        return out if out else None
+    return None
 
 
 @app.on_event("startup")
@@ -213,7 +248,7 @@ def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
     application = application or {}
     company = application.get("company") or job.get("company", "")
     company_id = application.get("company_id") or job.get("company_id", "")
-    return {
+    result = {
         "id": application.get("id"),
         "job_title": application.get("job_title") or job.get("title", ""),
         "company": company,
@@ -222,13 +257,60 @@ def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
         "salary": application.get("salary") or job.get("salary", ""),
         "job_url": application.get("job_url") or _normalize_job_url(job.get("url", "")),
         "city": application.get("city") or job.get("city", ""),
+        "area_district": application.get("area_district") or job.get("area_district", ""),
+        "business_district": application.get("business_district") or job.get("business_district", ""),
         "experience": application.get("experience") or job.get("experience", ""),
         "education": application.get("education") or job.get("education", ""),
+        "company_size": application.get("company_size") or job.get("company_size", ""),
+        "industry": application.get("industry") or job.get("industry", ""),
+        "legal_rep": application.get("legal_rep") or job.get("legal_rep", ""),
+        "is_boss": bool(application.get("is_boss") or job.get("is_boss", False)),
+        "optimize_at": application.get("optimize_at") or "",
+        "chat_suggestion_at": application.get("chat_suggestion_at") or "",
         "hr_name": application.get("hr_name") or job.get("hr_name", ""),
         "hr_title": application.get("hr_title") or job.get("hr_title", ""),
+        "hr_active": application.get("hr_active") or job.get("hr_active", ""),
         "description": application.get("description") or job.get("description", ""),
         "status": application.get("status") or ("pending" if job.get("url") else "missing_url"),
     }
+    _legal = result.get("legal_rep") or ""
+    _hr = result.get("hr_name") or ""
+    if _legal and _hr and _hr == _legal:
+        result["is_boss"] = True
+    _attach_hr_active_days(result)
+    return result
+
+
+def _attach_hr_active_days(job: dict):
+    """将 hr_active 字符串（如'今日活跃'、'3日内活跃'）转为 hr_active_days 和 hr_active_label。"""
+    import re
+
+    raw = (job.get("hr_active") or "").strip()
+    if not raw:
+        return
+    job["hr_active_label"] = raw
+
+    # 匹配数字
+    m = re.search(r"(\d+)", raw)
+    if m:
+        job["hr_active_days"] = int(m.group(1))
+        return
+
+    # 文本匹配
+    if "今日" in raw or "刚刚" in raw:
+        job["hr_active_days"] = 0
+    elif "昨日" in raw or "昨天" in raw:
+        job["hr_active_days"] = 1
+    elif "本周" in raw:
+        job["hr_active_days"] = 3
+    elif "本月" in raw or "近月" in raw:
+        job["hr_active_days"] = 7
+    elif "在线" in raw or "刚刚活跃" in raw:
+        job["hr_active_days"] = 0
+    elif "半年前" in raw or "超过半年" in raw:
+        job["hr_active_days"] = 180
+    else:
+        job["hr_active_days"] = 14  # 默认不活跃
 
 
 def _clean_messages_for_web(messages: List[dict]) -> List[dict]:
@@ -262,6 +344,8 @@ class SearchRequest(BaseModel):
     # 区域/公司规模过滤
     district: Optional[str] = ""  # 单区字符串（兼容旧接口），如 "张店区"
     districts: Optional[List[str]] = None  # 多区列表：["增城区", "番禺区"]，优先于 district
+    # 「工作区域」过滤（如淄博→["张店区", "临淄区"]，与 districts 是不同维度）
+    areas: Optional[List[str]] = None
     # company_size 支持列表多选 / 字符串单值 / "302,303" 逗号串
     company_size: Optional[List[str]] = None  # 列表形式优先
     company_size_str: Optional[str] = None  # 兼容旧的字符串字段
@@ -286,6 +370,8 @@ class AnalyzeRequest(BaseModel):
     job_title: Optional[str] = ""
     company: Optional[str] = ""
     description: Optional[str] = ""
+    company_id: Optional[str] = ""
+    with_company_info: Optional[bool] = False
 
 
 class SendMessageRequest(BaseModel):
@@ -364,7 +450,10 @@ async def broadcast_ws(message: dict):
 def index():
     html_path = static_dir / "dashboard.html"
     if html_path.exists():
-        return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        resp = HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
     return HTMLResponse(content="<h1>BOSS直聘自动化控制台</h1><p>dashboard.html 未找到</p>")
 
 
@@ -437,6 +526,72 @@ def doctor():
     return {"ok": all_ok, "checks": checks}
 
 
+@app.get("/api/debug/legal-rep")
+async def debug_legal_rep(company_id: str):
+    """[临时] 调 fetch_company_legal_rep。"""
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动")
+    rep = await _run_pw(automation.fetch_company_legal_rep, company_id)
+    return {"company_id": company_id, "legal_rep": rep}
+
+
+@app.get("/api/debug/dump-injection")
+async def debug_dump_injection(company_id: str = "608f74e849bb98e10HB-39-5Ew~~"):
+    """[临时] 导航到公司介绍页, dump 出注入对象里所有 'legalPerson' 路径。"""
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动")
+    url = f"https://www.zhipin.com/gongsi/{company_id}.html"
+
+    def _dump():
+        try:
+            automation.page.goto(url, wait_until="load", timeout=30000)
+        except Exception as e:
+            return {"goto_error": str(e)[:200]}
+        import time as _t
+
+        _t.sleep(2)
+        js = r"""
+        () => {
+            function walk(obj, path, depth, maxDepth, results) {
+                if (depth > maxDepth) return;
+                if (obj === null || obj === undefined) return;
+                if (typeof obj !== 'object') {
+                    var lower = path.toLowerCase();
+                    if (lower.endsWith('legalperson') || lower.endsWith('legal_person') ||
+                        lower.endsWith('legalpersonname') || lower.endsWith('representative') ||
+                        lower.endsWith('representativename')) {
+                        if (typeof obj === 'string' || typeof obj === 'number') {
+                            results.push({path: path, value: String(obj).slice(0,80)});
+                        }
+                    }
+                    return;
+                }
+                for (var k in obj) {
+                    try {
+                        walk(obj[k], path ? (path + '.' + k) : k, depth+1, maxDepth, results);
+                    } catch(e) {}
+                }
+            }
+            var results = [];
+            for (var name in window) {
+                try {
+                    var v = window[name];
+                    if (v && typeof v === 'object' && Object.keys(v).length > 0) {
+                        walk(v, name, 0, 5, results);
+                    }
+                } catch(e) {}
+            }
+            return {url: window.location.href, results: results.slice(0, 50)};
+        }
+        """
+        try:
+            return automation.page.evaluate(js) or {"results": []}
+        except Exception as e:
+            return {"error": str(e)[:200]}
+
+    return await _run_pw(_dump)
+
+
 @app.post("/api/system/start")
 async def start_automation():
     global automation, monitor_task
@@ -459,10 +614,31 @@ async def start_automation():
         automation = None
         return {"status": "error", "message": "浏览器启动后页面为空，请重试"}
 
+    # 快速检查登录状态
+    def _check_login():
+        try:
+            url = automation.page.url
+            if "passport" in url or "security" in url:
+                return {"logged_in": False, "reason": "触发安全验证", "url": url}
+            if automation._login_prompt_visible():
+                return {"logged_in": False, "reason": "需要登录", "url": url}
+            return {"logged_in": True, "reason": "", "url": url}
+        except Exception:
+            return {"logged_in": True, "reason": "", "url": ""}
+
+    login_status = await _run_pw(_check_login)
+    if not login_status.get("logged_in"):
+        msg = f"浏览器已启动但登录态异常: {login_status.get('reason')}。请手动登录或使用 /api/system/relogin。"
+        return {"status": "warning", "message": msg, "login_status": login_status}
+
     if monitor_task is None or monitor_task.done():
         monitor_task = asyncio.create_task(chat_monitor_loop())
+    try:
+        await _run_pw(_refresh_zp_cache)
+    except Exception:
+        pass
     await broadcast_ws({"type": "system", "event": "started"})
-    return {"status": "started"}
+    return {"status": "started", "login_status": login_status}
 
 
 @app.post("/api/system/stop")
@@ -518,6 +694,10 @@ async def relogin():
 
     if monitor_task is None or monitor_task.done():
         monitor_task = asyncio.create_task(chat_monitor_loop())
+    try:
+        await _run_pw(_refresh_zp_cache)
+    except Exception:
+        pass
     await broadcast_ws({"type": "system", "event": "relogin_ok"})
     return {"status": "ok", "message": "扫码登录成功"}
 
@@ -699,6 +879,14 @@ async def search_jobs(req: SearchRequest):
             if req.district and req.district not in ds_list:
                 ds_list.append(req.district)
 
+            # 「工作区域」（如淄博→张店区/临淄区）
+            ar_list: list = []
+            if req.areas:
+                if isinstance(req.areas, list):
+                    ar_list = [str(a).strip() for a in req.areas if a]
+                else:
+                    ar_list = [str(req.areas).strip()]
+
             jobs = await _run_pw(
                 automation.search,
                 req.keyword,
@@ -706,6 +894,7 @@ async def search_jobs(req: SearchRequest):
                 ds_list or None,  # 多区列表（list / None）
                 "",  # 旧单区字段已合并到 ds_list
                 cs_list if cs_list else None,  # 规模列表
+                ar_list if ar_list else None,  # 工作区域列表
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
@@ -735,6 +924,38 @@ async def search_jobs(req: SearchRequest):
             else:
                 result_jobs.append(_search_job_payload(j))
 
+        # 补抓法人信息：对缺少 legal_rep 但有 encrypt_brand_id 的公司批量补抓
+        need_legal = [j for j in jobs if j.get("encrypt_brand_id") and not j.get("legal_rep")]
+        seen_cids = set()
+        for j in need_legal:
+            cid = j.get("encrypt_brand_id", "")
+            if cid and cid not in seen_cids:
+                seen_cids.add(cid)
+                try:
+                    legal = await _run_pw(automation.fetch_company_legal_rep, cid)
+                    if legal:
+                        for k in jobs:
+                            if k.get("encrypt_brand_id") == cid:
+                                k["legal_rep"] = legal
+                                k["is_boss"] = (k.get("hr_name") or "") == legal
+                        if j.get("url"):
+                            db = get_db()
+                            db.execute(
+                                "UPDATE applications SET legal_rep=?, is_boss=? WHERE job_url=?",
+                                (legal, 1 if (j.get("hr_name") or "") == legal else 0, j["url"]),
+                            )
+                            db.commit()
+                except Exception:
+                    pass
+        # 更新 result_jobs 中对应的 legal_rep / is_boss
+        for rj in result_jobs:
+            for j in jobs:
+                if j.get("url") and rj.get("job_url") == _normalize_job_url(j.get("url", "")):
+                    if j.get("legal_rep") and not rj.get("legal_rep"):
+                        rj["legal_rep"] = j["legal_rep"]
+                    if j.get("is_boss") and not rj.get("is_boss"):
+                        rj["is_boss"] = True
+
         await broadcast_ws(
             {
                 "type": "search_complete",
@@ -743,6 +964,10 @@ async def search_jobs(req: SearchRequest):
                 "found": len(jobs),
             }
         )
+        try:
+            await _run_pw(_refresh_zp_cache)
+        except Exception:
+            pass
         return {"jobs_found": len(jobs), "saved": len(saved_ids), "jobs": result_jobs}
     finally:
         monitor_paused = was_paused
@@ -797,9 +1022,17 @@ async def api_companies_preview(
     keyword: Optional[str] = "",
     city: Optional[str] = "",
     mode: Optional[str] = "fast",
+    districts: Optional[str] = None,
+    company_size: Optional[str] = None,
+    areas: Optional[str] = None,
 ):
     """智能投递预览：搜索 → 按公司分组 → 每家公司从搜索结果里提取 HR → pick_top_hr。
     返回所有公司列表，每家带 top_hr + 岗位列表 + 推荐投递的 job_url。
+
+    新增过滤参数：
+      - districts: 多个区 code 用英文逗号分隔（如 "440118,440113"），与 search 共享同一参数
+      - company_size: 多个 scale code 逗号分隔（如 "302,303"），同上
+      - areas: 多个工作区域名逗号分隔（如 "张店区,临淄区"），与 search 共享同一参数
     """
     if not automation or automation.page is None:
         raise HTTPException(status_code=503, detail="浏览器未启动，请先到设置Tab点击「启动浏览器」")
@@ -807,10 +1040,21 @@ async def api_companies_preview(
     if not keyword and not company:
         raise HTTPException(status_code=400, detail="keyword 或 company 至少给一个")
 
-    # 1) 搜索
+    # 1) 搜索：合并 districts/company_size/areas
     city_code = CITY_MAP.get(city or get_setting("default_city", "全国"), "100010000")
+    ds_list = [x.strip() for x in (districts or "").split(",") if x.strip()] or None
+    cs_list = [x.strip() for x in (company_size or "").split(",") if x.strip()] or None
+    ar_list = [x.strip() for x in (areas or "").split(",") if x.strip()] or None
     try:
-        jobs = await _run_pw(automation.search, keyword or company, city_code)
+        jobs = await _run_pw(
+            automation.search,
+            keyword or company,
+            city_code,
+            ds_list,  # 多区列表（districts 优先）
+            "",  # 单区字段已合并到 ds_list
+            cs_list,  # 规模列表
+            ar_list,  # 工作区域列表
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
     if not jobs:
@@ -1082,7 +1326,29 @@ async def apply_to_job(req: ApplyRequest):
         is_boss = bool((job or {}).get("is_boss")) if job else False
         style = get_setting("ai_reply_style", "professional")
         resume = get_setting("resume_summary", "")
-        greeting = await asyncio.to_thread(generate_greeting_ai, title, company, "", job_desc, is_boss, style, resume)
+        # 注入简历优化建议，让招呼语更贴合JD
+        opt_hints = ""
+        if job:
+            try:
+                import json as _json
+
+                _opt = job.get("optimize_result") or ""
+                if _opt:
+                    _opt_data = _json.loads(_opt) if isinstance(_opt, str) else _opt
+                    parts = []
+                    if _opt_data.get("one_line"):
+                        parts.append("核心定位: " + _opt_data["one_line"])
+                    if _opt_data.get("match_gaps"):
+                        parts.append("匹配差距: " + ", ".join(_opt_data["match_gaps"][:3]))
+                    if _opt_data.get("optimize_tips"):
+                        for t in _opt_data.get("optimize_tips", [])[:2]:
+                            parts.append(f"{t.get('area', '')}: {t.get('suggestion', '')}")
+                    opt_hints = "\n".join(parts)
+            except Exception:
+                pass
+        greeting = await asyncio.to_thread(
+            generate_greeting_ai, title, company, "", job_desc, is_boss, style, resume, opt_hints
+        )
 
     # 在后台线程运行（Playwright 是同步的）
     result = await _run_pw(automation.apply_to_job, req.job_url, greeting)
@@ -1201,10 +1467,14 @@ async def analyze_jd(req: AnalyzeRequest):
 ## 输出格式（严格JSON）
 {{
   "match_score": 85,
+  "decision": "建议投递",
   "key_skills": ["Python", "LangChain", "RAG"],
   "gap": "缺少K8s部署经验",
   "advice": "建议强调Agent开发经验，问对方技术栈",
-  "summary": "整体匹配度较高，注意补充部署相关经验"
+  "summary": "整体匹配度较高，注意补充部署相关经验",
+  "reasons": ["匹配理由1", "匹配理由2"],
+  "risks": ["风险点1"],
+  "suggested_questions": ["建议追问1"]
 }}"""
     else:
         prompt = f"""你是求职辅导专家。分析以下岗位JD，提取关键信息，输出JSON。
@@ -1217,10 +1487,14 @@ async def analyze_jd(req: AnalyzeRequest):
 ## 输出格式（严格JSON）
 {{
   "match_score": 70,
+  "decision": "可以尝试",
   "key_skills": ["Python", "LangChain", "RAG"],
   "gap": "",
   "advice": "",
-  "summary": "该岗位的核心要求是..."
+  "summary": "该岗位的核心要求是...",
+  "reasons": ["理由1"],
+  "risks": ["风险1"],
+  "suggested_questions": ["追问1"]
 }}
 
 注意：match_score 基于 JD 难度和市场需求预估即可，不必对比简历。summary 用一两句总结这个岗位的核心要求。"""
@@ -1236,9 +1510,254 @@ async def analyze_jd(req: AnalyzeRequest):
         )
         import json
 
-        return json.loads(raw.strip().strip("`").strip("json").strip())
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        if raw.lower().startswith("```json"):
+            raw = raw[7:].strip()
+        return json.loads(raw)
     except Exception as e:
         return {"error": f"AI分析失败: {e}", "match_score": 0, "summary": "请检查AI配置"}
+
+
+class OptimizeResumeRequest(BaseModel):
+    job_url: str
+    job_title: Optional[str] = ""
+    company: Optional[str] = ""
+    description: Optional[str] = ""
+    force_refresh: Optional[bool] = False  # 是否强制重新生成
+
+
+@app.post("/api/jobs/optimize-resume")
+async def optimize_resume(req: OptimizeResumeRequest):
+    """根据岗位JD生成简历优化建议（24h内缓存复用，避免重复消耗token）。"""
+    resume = get_setting("resume_summary", "")
+    desc = req.description or ""
+    title = req.job_title or ""
+    company = req.company or ""
+
+    if not desc and req.job_url:
+        existing = get_application_by_url(req.job_url)
+        if existing:
+            desc = existing.get("description") or ""
+            title = title or existing.get("job_title", "")
+            company = company or existing.get("company", "")
+
+    import datetime
+    from boss_state import get_db
+
+    db = get_db()
+    row = db.execute(
+        "SELECT optimize_result, optimize_at FROM applications WHERE job_url=?",
+        (req.job_url,),
+    ).fetchone()
+    cached_result = None
+    if row and row["optimize_result"]:
+        try:
+            cached_result = json.loads(row["optimize_result"])
+        except Exception:
+            cached_result = None
+        if cached_result and not req.force_refresh and row["optimize_at"]:
+            try:
+                t = datetime.datetime.fromisoformat(row["optimize_at"])
+                if (datetime.datetime.now() - t).total_seconds() < 86400:
+                    cached_result["_cached"] = True
+                    cached_result["_cached_at"] = row["optimize_at"]
+                    return cached_result
+            except Exception:
+                pass
+
+    prompt = f"""你是站在求职者一侧的简历审计官和优化专家。根据以下岗位JD，生成简历优化建议。
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:3000]}
+
+{"## 求职者当前简历" + chr(10) + resume[:2000] if resume and len(resume.strip()) > 5 else "（求职者未提供简历，请基于JD给出通用优化建议）"}
+
+## 输出格式（严格JSON）
+{{
+  "one_line": "一句话结论：这份简历最需要改什么",
+  "key_requirements": ["JD最核心的3-5个要求"],
+  "match_gaps": ["简历中缺少但JD强调的方向", "..."],
+  "optimize_tips": [
+    {{"area": "需要优化的模块", "current": "当前写了什么（如有简历）", "suggestion": "建议改为什么", "why": "为什么要这样改"}},
+    ...
+  ],
+  "keywords_to_add": ["需要在简历中加入的关键词"],
+  "action_items": ["立刻修改的1-3个最高优先级事项"],
+  "rewrite_example": "一段改写后的项目经历示例（改写前后对比）"
+}}
+
+## 改写原则
+1. 不编造数据、项目、经历
+2. 把"负责了什么"改成"做成了什么"
+3. 每条经历体现：动作 + 产物 + 结果
+4. 量化优先：没有精确数字时用范围、频率、规模
+5. 关键词匹配JD优先于通用优化
+6. 用简体中文"""
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职简历优化专家，输出严格JSON，用简体中文。",
+            temperature=0.4,
+        )
+        import json
+
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        if raw.lower().startswith("```json"):
+            raw = raw[7:].strip()
+        result = json.loads(raw)
+        try:
+            db.execute(
+                "UPDATE applications SET optimize_result=?, optimize_at=CURRENT_TIMESTAMP WHERE job_url=?",
+                (json.dumps(result, ensure_ascii=False), req.job_url),
+            )
+            db.commit()
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        return {"error": f"AI优化失败: {e}", "one_line": "请检查AI配置", "optimize_tips": [], "action_items": []}
+
+
+class ChatSuggestionRequest(BaseModel):
+    job_url: str
+    job_title: Optional[str] = ""
+    company: Optional[str] = ""
+    description: Optional[str] = ""
+    hr_name: Optional[str] = ""
+    hr_title: Optional[str] = ""
+    is_boss: Optional[bool] = False
+
+
+@app.post("/api/jobs/chat-suggestion")
+async def chat_suggestion(req: ChatSuggestionRequest):
+    """根据岗位JD + HR信息生成沟通建议（打招呼话术、聊什么、避雷点）。
+    缓存到 DB chat_suggestion_result / chat_suggestion_at，24h 内复用。
+    """
+    desc = req.description or ""
+    title = req.job_title or ""
+    company = req.company or ""
+    hr_name = req.hr_name or ""
+    hr_title = req.hr_title or ""
+    is_boss = req.is_boss or False
+
+    if not desc and req.job_url:
+        existing = get_application_by_url(req.job_url)
+        if existing:
+            desc = existing.get("description") or desc
+            title = title or existing.get("job_title", "")
+            company = company or existing.get("company", "")
+            hr_name = hr_name or existing.get("hr_name", "")
+            hr_title = hr_title or existing.get("hr_title", "")
+            is_boss = is_boss or bool(existing.get("is_boss"))
+
+    import datetime
+    from boss_state import get_db
+
+    db = get_db()
+    row = db.execute(
+        "SELECT chat_suggestion_result, chat_suggestion_at FROM applications WHERE job_url=?",
+        (req.job_url,),
+    ).fetchone()
+    cached_result = None
+    if row and row["chat_suggestion_result"]:
+        try:
+            cached_result = json.loads(row["chat_suggestion_result"])
+        except Exception:
+            cached_result = None
+        if cached_result and row["chat_suggestion_at"]:
+            try:
+                t = datetime.datetime.fromisoformat(row["chat_suggestion_at"])
+                if (datetime.datetime.now() - t).total_seconds() < 86400:
+                    cached_result["_cached"] = True
+                    cached_result["_cached_at"] = row["chat_suggestion_at"]
+                    return cached_result
+            except Exception:
+                pass
+
+    resume = get_setting("resume_summary", "")
+
+    boss_hint = "对方很可能是公司老板/法人本人，语气要更诚意、更直接" if is_boss else ""
+    hr_ctx = f"HR姓名: {hr_name}" + (f"，头衔: {hr_title}" if hr_title else "")
+    if is_boss and hr_name:
+        hr_ctx += f"（⚠ {hr_name}是公司法人/老板）"
+
+    prompt = f"""你是求职沟通教练，帮求职者生成和 HR 的沟通策略。
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:2000]}
+
+## HR 信息
+- {hr_ctx}
+{("- " + boss_hint) if boss_hint else ""}
+
+{"## 求职者简历摘要" + chr(10) + resume[:1500] if resume and len(resume.strip()) > 5 else ""}
+
+## 输出格式（严格JSON）
+{{
+  "icebreaker": "一句自然的第一句话打招呼（10-25字，像真人说话，不客套）",
+  "chat_topics": [
+    {{"topic": "话题方向", "angle": "怎么说", "example": "具体话术示例"}},
+    ...
+  ],
+  "avoid": ["千万别说的话/踩雷点", "..."],
+  "follow_up": "如果对方不回复，怎么优雅跟进的话术",
+  "close_deal": "如何引导到面试/后续的话术",
+  "tone_tip": "整体沟通风格建议（1-2句）"
+}}
+
+## 原则
+1. 打招呼语必须紧扣JD内容，不说空话套话
+2. 不要列技能清单，要找JD中感兴趣的具体点聊
+3. 避免过于卑微或过于自信
+4. {boss_hint if boss_hint else "HR是招聘方代表，专业自然即可"}
+5. 用简体中文"""
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职沟通教练，输出严格JSON，用简体中文。",
+            temperature=0.6,
+        )
+        import json as _json
+
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        if raw.lower().startswith("```json"):
+            raw = raw[7:].strip()
+        result = _json.loads(raw)
+        try:
+            db.execute(
+                "UPDATE applications SET chat_suggestion_result=?, chat_suggestion_at=CURRENT_TIMESTAMP WHERE job_url=?",
+                (_json.dumps(result, ensure_ascii=False), req.job_url),
+            )
+            db.commit()
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        return {"error": f"沟通建议生成失败: {e}", "icebreaker": "", "chat_topics": [], "avoid": []}
 
 
 # ══════════════════════════════════════
@@ -1457,26 +1976,113 @@ def geo_cities(force: bool = False):
         raise HTTPException(status_code=500, detail=f"获取城市失败: {e}")
 
 
-@app.get("/api/geo/districts")
-def geo_districts(city: str, force: bool = False):
-    """某城市下的区/县级列表（multiBusinessDistrict 实际使用的 code）。
+@app.get("/api/debug/auth")
+async def debug_auth():
+    """临时调试端点：查看缓存的鉴权状态。"""
+    from boss_geo import resolve_city_code
 
-    city: 城市名（如"广州"）或 city code（如"101280100"）
-    """
+    cached = _get_cached_headers()
+    zp_ok = bool(cached and cached.get("zp_token"))
+    cookie_ok = bool(cached and cached.get("Cookie"))
+    # 强制刷新一次
+    if automation and automation.page:
+        try:
+            await asyncio.wait_for(_run_pw(_refresh_zp_cache), timeout=8.0)
+        except Exception:
+            pass
+    fresh = _get_cached_headers()
+    return {
+        "cached_before": {"zp_token": zp_ok, "cookie": cookie_ok},
+        "cached_after": {
+            "zp_token": bool(fresh and fresh.get("zp_token")),
+            "cookie": bool(fresh and fresh.get("Cookie")),
+            "cookie_len": len(fresh.get("Cookie", "")) if fresh else 0,
+        },
+        "browser_running": bool(automation and automation.page),
+    }
+
+
+@app.get("/api/geo/districts")
+async def geo_districts(city: str, force: bool = False):
+    """某城市下的区/县级列表。用浏览器内置 fetch 获取。"""
     if not city:
         raise HTTPException(status_code=400, detail="缺少 city 参数")
+    if not automation or not automation.page:
+        raise HTTPException(status_code=503, detail="浏览器未启动")
     try:
-        from boss_geo import get_districts, resolve_city_code
+        from boss_geo import resolve_city_code, _parse_districts, _cache
+        import time as _time
 
         city_code = resolve_city_code(city)
         if not city_code:
             raise HTTPException(status_code=404, detail=f"未找到城市: {city}")
-        districts = get_districts(city_code, force=force)
+
+        if not force:
+            cached = _cache["districts"].get(city_code)
+            ts = _cache["districts_ts"].get(city_code, 0)
+            if cached and (_time.time() - ts) < _cache["ttl_sec"]:
+                return {"city": city, "city_code": city_code, "districts": cached}
+
+        def _fetch():
+            try:
+                url = f"https://www.zhipin.com/wapi/zpgeek/businessDistrict.json?cityCode={city_code}"
+                result = automation.page.evaluate(
+                    "async (url) => { try { const r = await fetch(url); return await r.json(); } catch(e) { return {code: -1, error: String(e)}; } }",
+                    url,
+                )
+                return result
+            except Exception as e:
+                print(f"[DEBUG geo] _fetch exception: {e}")
+                return None
+
+        raw = await asyncio.wait_for(_run_pw(_fetch), timeout=15.0)
+
+        if not raw or raw.get("code") != 0:
+            cached = _cache["districts"].get(city_code)
+            return {"city": city, "city_code": city_code, "districts": cached or []}
+
+        # raw 可能是 {source:..., data:...} 格式（DOM回退），也可能是标准 {code:0, zpData:...}
+        if isinstance(raw, dict) and raw.get("source") and isinstance(raw.get("data"), list):
+            items = raw["data"]
+            districts = [{"name": d.get("name", ""), "code": str(d.get("code", ""))} for d in items if d.get("name")]
+            by_name = {d["name"]: d["code"] for d in districts}
+            by_code = {d["code"]: d["name"] for d in districts}
+        else:
+            districts, by_name, by_code = _parse_districts(raw)
+
+        _cache["districts"][city_code] = districts
+        _cache["districts_ts"][city_code] = _time.time()
+        _cache["district_by_name"][city_code] = by_name
+        _cache["district_by_code"][city_code] = by_code
+
         return {"city": city, "city_code": city_code, "districts": districts}
+    except asyncio.TimeoutError:
+        return {"city": city, "city_code": city_code, "districts": _cache["districts"].get(city_code, [])}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取区域失败: {e}")
+
+
+@app.get("/api/geo/areas")
+async def geo_areas(city: str):
+    """某城市下的「工作区域」列表（6位行政区域码）。复用 districts 缓存过滤。"""
+    if not city:
+        raise HTTPException(status_code=400, detail="缺少 city 参数")
+    try:
+        from boss_geo import resolve_city_code, _cache
+
+        city_code = resolve_city_code(city)
+        if not city_code:
+            raise HTTPException(status_code=404, detail=f"未找到城市: {city}")
+
+        districts = _cache["districts"].get(city_code) or []
+        areas = [d for d in districts if d.get("code", "").isdigit() and len(d.get("code", "")) == 6]
+        return {"city": city, "city_code": city_code, "areas": areas}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取工作区域失败: {e}")
 
 
 # ══════════════════════════════════════
@@ -1496,19 +2102,22 @@ def read_settings():
 @app.put("/api/settings")
 async def update_settings(req: SettingsUpdate):
     updates = {}
+    # greeting_enabled → 实际 key 是 ai_greeting_enabled
+    _key_alias = {"greeting_enabled": "ai_greeting_enabled"}
     for k, v in req.model_dump().items():
-        if k == "ai_api_key" and v:
+        actual_key = _key_alias.get(k, k)
+        if actual_key == "ai_api_key" and v:
             set_setting("ai_api_key", str(v))
             updates["ai_key_configured"] = "true"
             continue
         # 允许清空个人微信：前端传空字符串时覆盖为""
-        if k == "wechat_id" and (v is None or v == ""):
+        if actual_key == "wechat_id" and (v is None or v == ""):
             set_setting("wechat_id", "")
             updates["wechat_id"] = ""
             continue
         if v is not None and v != "":
-            set_setting(k, str(v))
-            updates[k] = str(v)
+            set_setting(actual_key, str(v))
+            updates[actual_key] = str(v)
     await broadcast_ws({"type": "settings_updated", "updates": updates})
     return {"status": "ok", "updated": updates}
 
@@ -1639,6 +2248,12 @@ async def chat_monitor_loop():
                 continue
 
             result = await _run_pw(automation.run_chat_monitor_cycle)
+
+            # 每轮监控后刷新 zp headers 缓存，供 geo 端点使用
+            try:
+                await _run_pw(_refresh_zp_cache)
+            except Exception:
+                pass
 
             if result.get("new_messages", 0) > 0:
                 await broadcast_ws(

@@ -199,31 +199,179 @@ def shortlist_cmd(action, job_url, title, company, sid):
 # ── 服务管理 ──
 @main.command("server")
 @click.option("--start", is_flag=True, help="启动后台服务")
-@click.option("--stop", is_flag=True, help="停止后台服务")
+@click.option("--stop", is_flag=True, help="停止后台服务（精确杀 boss_app 进程，不动其他 python）")
 @click.option("--port", type=int, default=8010, help="服务端口")
 def server_cmd(start, stop, port):
-    import subprocess
-    import os
+    import subprocess, os
+
+    project_dir = os.path.dirname(os.path.dirname(__file__))
+    if not os.path.exists(os.path.join(project_dir, "boss_app.py")):
+        project_dir = os.environ.get("LAKEJOB_PROJECT", r"D:\lake\jiaoben\job\lakejobai-job-radar-main")
 
     if start:
-        project_dir = os.path.dirname(os.path.dirname(__file__))
-        cmd = ["python", f"{project_dir}/boss_app.py", "--port", str(port)]
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0)
+        cmd = ["python", os.path.join(project_dir, "boss_app.py"), "--port", str(port)]
+        subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000), cwd=project_dir)
         output.emit(output.ok("server", data={"status": "started", "url": f"http://127.0.0.1:{port}"}))
     elif stop:
-        import platform
-
-        if platform.system() == "Windows":
-            os.system(f"taskkill /F /IM python.exe 2>nul")
-        else:
-            os.system("pkill -f boss_app.py")
-        output.emit(output.ok("server", data={"status": "stopped"}))
+        killed = _kill_boss_app()
+        output.emit(output.ok("server", data={"status": "stopped", "killed": killed}))
     else:
         resp = client.status()
         if resp.is_error:
             output.emit(output.ok("server", data={"status": "not running"}))
         else:
             output.emit(output.ok("server", data={"status": "running"}))
+
+
+@main.command("restart")
+@click.option("--port", type=int, default=8010, help="端口号")
+def restart_cmd(port):
+    """杀旧进程 + 起新服务。Windows 用 wmic 精确杀，不动其他 python。"""
+    import subprocess, os, time, urllib.request
+
+    project_dir = os.path.dirname(os.path.dirname(__file__))
+    if not os.path.exists(os.path.join(project_dir, "boss_app.py")):
+        project_dir = os.environ.get("LAKEJOB_PROJECT", r"D:\lake\jiaoben\job\lakejobai-job-radar-main")
+
+    boss_py = os.path.join(project_dir, "boss_app.py")
+    if not os.path.exists(boss_py):
+        output.emit(output.fail("restart", f"找不到 boss_app.py"))
+        return
+
+    killed = _kill_boss_app()
+    if killed:
+        click.echo(f"  killed {killed} process(es)")
+    time.sleep(2)
+
+    log_path = os.path.join(os.environ.get("TEMP") or os.environ.get("TMP") or "/tmp", "boss_app.log")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    with open(log_path, "w", encoding="utf-8") as lf:
+        subprocess.Popen(
+            [sys.executable, boss_py, "--port", str(port)],
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            cwd=project_dir,
+            creationflags=flags,
+        )
+
+    time.sleep(5)
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/api/health"), timeout=3)
+        output.emit(output.ok("restart", data={"port": port, "url": f"http://127.0.0.1:{port}"}))
+    except Exception:
+        output.emit(output.ok("restart", data={"port": port, "url": f"http://127.0.0.1:{port}", "note": "稍等再试"}))
+
+
+def _kill_boss_app():
+    """用 wmic 精确杀死所有 boss_app 进程，不动其他 python。返回杀死数。"""
+    import subprocess
+
+    killed = 0
+    try:
+        r = subprocess.run(
+            "wmic process where \"commandline like '%boss_app%'\" get processid",
+            capture_output=True,
+            shell=True,
+            text=True,
+            timeout=10,
+        )
+        for line in r.stdout.split("\n"):
+            line = line.strip()
+            if line.isdigit():
+                try:
+                    subprocess.run(f"taskkill /F /PID {line}", capture_output=True, shell=True, timeout=5)
+                    killed += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return killed
+
+
+# ── 智能投递 ──
+@main.command("smart-send")
+@click.option("--keyword", default="", help="搜索关键词")
+@click.option("--city", default="", help="城市")
+@click.option("--greeting", default="", help="自定义招呼语")
+@click.option("--yes", "-y", is_flag=True, help="跳过确认")
+@click.option("--districts", default="", help="多区 code 列表，逗号分隔，如 440118,440113")
+@click.option("--company-size", default="", help="多规模 code 列表，逗号分隔，如 302,303")
+def smart_send_cmd(keyword, city, greeting, yes, districts, company_size):
+    """智能投递：搜索→按公司分组→挑最高HR→批量投递。"""
+    if not keyword:
+        output.emit(output.fail("smart-send", "--keyword 必填"))
+        return
+    ds_list = [x.strip() for x in districts.split(",") if x.strip()] or None
+    cs_list = [x.strip() for x in company_size.split(",") if x.strip()] or None
+    try:
+        resp = client.company_preview(
+            keyword=keyword,
+            city=city,
+            districts=ds_list,
+            company_size=cs_list,
+        )
+        data = resp.json() if not resp.is_error else None
+    except Exception as e:
+        output.emit(output.fail("smart-send", f"preview 失败: {e}"))
+        return
+    if resp.is_error or not data or not data.get("ok"):
+        output.emit(output.fail("smart-send", f"preview 失败: {(data or {}).get('message', '')}"))
+        return
+
+    companies = data.get("companies") or []
+    output.emit(output.ok("smart-send-preview", data={"total_companies": len(companies), "keyword": keyword}))
+
+    targets = []
+    for c in companies[:20]:
+        if c.get("already_applied"):
+            continue
+        tj = c.get("target_job") or {}
+        if not tj.get("url"):
+            continue
+        top = c.get("top_hr") or {}
+        targets.append(
+            {
+                "company": c["company"],
+                "job_url": tj["url"],
+                "hr_name": top.get("name", ""),
+                "hr_title": top.get("title", ""),
+                "is_boss": top.get("is_boss", False),
+                "boss_confidence": top.get("boss_confidence", ""),
+            }
+        )
+
+    if not targets:
+        output.emit(output.fail("smart-send", "没有可投递的公司"))
+        return
+
+    if not yes:
+        click.echo(f"\n  共 {len(targets)} 家公司待投递：")
+        for t in targets:
+            boss_tag = ""
+            if t.get("is_boss"):
+                conf = {"high": "★老板", "medium": "疑似老板", "low": "可能老板?"}.get(
+                    t.get("boss_confidence", ""), "疑似老板"
+                )
+                boss_tag = f"  [{conf}]"
+            click.echo(f"    {t['company']}  →  {t.get('hr_name') or 'HR'} ({t.get('hr_title', '')}){boss_tag}")
+        click.echo("\n  确认？[y/N] ", nl=False)
+        try:
+            ans = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans not in ("y", "yes"):
+            output.emit(output.ok("smart-send", data={"cancelled": True}))
+            return
+
+    resp2 = client.smart_send(company="", job_url="", targets=targets, confirm=True)
+    result = output.ok_or_fail(resp2, "smart-send")
+    try:
+        payload = resp2.json()
+        if isinstance(result.get("data"), dict) and isinstance(payload, dict):
+            result["data"].update(payload)
+    except Exception:
+        pass
+    output.emit(result)
 
 
 if __name__ == "__main__":

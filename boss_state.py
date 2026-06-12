@@ -39,6 +39,7 @@ def init_db():
             education TEXT,
             hr_name TEXT,
             hr_title TEXT,
+            hr_active TEXT DEFAULT '',
             description TEXT,
             status TEXT DEFAULT 'pending',
             greeting_text TEXT,
@@ -46,7 +47,47 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """)
 
+    # 迁移：已有DB补字段
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN hr_active TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN area_district TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN business_district TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN company_size TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN industry TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN optimize_result TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN optimize_at TIMESTAMP")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN chat_suggestion_result TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN chat_suggestion_at TIMESTAMP")
+    except Exception:
+        pass
+
+    db.executescript("""
         CREATE TABLE IF NOT EXISTS conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             application_id INTEGER REFERENCES applications(id),
@@ -180,6 +221,32 @@ def _rows_to_list(rows) -> List[dict]:
     return [dict(r) for r in rows]
 
 
+def _apply_hr_active_days(job: dict):
+    """将 hr_active 字符串转为 hr_active_days / hr_active_label。"""
+    import re
+
+    raw = (job.get("hr_active") or "").strip()
+    if not raw:
+        return
+    job["hr_active_label"] = raw
+    m = re.search(r"(\d+)", raw)
+    if m:
+        job["hr_active_days"] = int(m.group(1))
+        return
+    if "今日" in raw or "刚刚" in raw or "在线" in raw:
+        job["hr_active_days"] = 0
+    elif "昨日" in raw or "昨天" in raw:
+        job["hr_active_days"] = 1
+    elif "本周" in raw:
+        job["hr_active_days"] = 3
+    elif "本月" in raw or "近月" in raw:
+        job["hr_active_days"] = 7
+    elif "半年前" in raw or "超过半年" in raw:
+        job["hr_active_days"] = 180
+    else:
+        job["hr_active_days"] = 14
+
+
 # ══════════════════════════════════════
 #  Applications
 # ══════════════════════════════════════
@@ -189,8 +256,8 @@ def add_application(job: dict) -> int:
     db = get_db()
     cur = db.execute(
         """INSERT OR IGNORE INTO applications
-           (job_title, company, company_id, salary, job_url, city, experience, education, hr_name, hr_title, description, legal_rep, is_boss)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (job_title, company, company_id, salary, job_url, city, experience, education, hr_name, hr_title, hr_active, description, legal_rep, is_boss, area_district, business_district, company_size, industry)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             job.get("title", ""),
             job.get("company", ""),
@@ -202,9 +269,14 @@ def add_application(job: dict) -> int:
             job.get("education", ""),
             job.get("hr_name", ""),
             job.get("hr_title", ""),
+            job.get("hr_active", ""),
             job.get("description", ""),
             job.get("legal_rep", ""),
             1 if job.get("is_boss") else 0,
+            job.get("area_district", ""),
+            job.get("business_district", ""),
+            job.get("company_size", ""),
+            job.get("industry", ""),
         ),
     )
     db.commit()
@@ -231,7 +303,12 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
         "education": job.get("education", ""),
         "hr_name": job.get("hr_name", ""),
         "hr_title": job.get("hr_title", ""),
+        "hr_active": job.get("hr_active", ""),
         "description": job.get("description", ""),
+        "area_district": job.get("area_district", ""),
+        "business_district": job.get("business_district", ""),
+        "company_size": job.get("company_size", ""),
+        "industry": job.get("industry", ""),
     }
     params = []
     assignments = []
@@ -260,7 +337,10 @@ def list_applications(status: Optional[str] = None, limit: int = 50) -> List[dic
         ).fetchall()
     else:
         rows = db.execute("SELECT * FROM applications ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
-    return _rows_to_list(rows)
+    result = _rows_to_list(rows)
+    for j in result:
+        _apply_hr_active_days(j)
+    return result
 
 
 def update_application_status(app_id: int, status: str, greeting_text: Optional[str] = None):

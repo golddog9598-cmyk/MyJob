@@ -106,6 +106,32 @@
       "name": "server",
       "description": "管理后台服务（启动/停止/状态）。",
       "cli": "lakejob server [--start|--stop] [--port 8010]"
+    },
+    {
+      "name": "company-preview",
+      "description": "拉取公司画像：在招岗位数 + 全部岗位 + 全部 HR（带职务）+ 挑出的职务最高 HR。两种模式：keyword（跨公司聚合选最热）或 company/company_id（单公司）。",
+      "cli": "lakejob smart-send --keyword <关键词> [--city <城市>]  或  lakejob smart-send --company <公司名> [--company-id <id>]",
+      "endpoint": "GET /api/companies/preview",
+      "params": {
+        "keyword": { "type": "string", "required": false, "description": "搜索关键词；和 company 二选一" },
+        "city": { "type": "string", "required": false },
+        "company": { "type": "string", "required": false, "description": "单公司模式直接指定公司名" },
+        "company_id": { "type": "string", "required": false, "description": "BOSS 32位 hex 的 companyId" }
+      }
+    },
+    {
+      "name": "smart-send",
+      "description": "智能投递：先预览公司画像挑出职务最高的 HR，再发招呼语 + 投递到该 HR 的岗位。默认会等用户 y/N 确认，加 --yes 跳过。",
+      "cli": "lakejob smart-send --keyword <关键词> [--city <城市>] [--greeting <招呼语>] [--yes]",
+      "endpoint": "POST /api/companies/smart-send",
+      "params": {
+        "keyword": { "type": "string", "required": false },
+        "city": { "type": "string", "required": false },
+        "company": { "type": "string", "required": false },
+        "company_id": { "type": "string", "required": false },
+        "greeting": { "type": "string", "required": false, "description": "留空自动生成，会把 top_hr 称呼带进招呼语" },
+        "yes": { "type": "boolean", "required": false, "default": false, "description": "跳过 y/N 确认直接投递" }
+      }
     }
   ],
   "output_format": {
@@ -119,5 +145,5 @@
       "hints": "object - 后续操作提示"
     }
   },
-  "agent_instructions": "当用户要求搜索职位、投递岗位、查看聊天等BOSS直聘操作时：1. 先运行 lakejob status 检查状态 2. 如需登录运行 lakejob login 3. 根据意图调用对应命令 4. 解析返回JSON中的 ok 字段判断成败。推荐工作流：search → 用户手动在BOSS调筛 → scan → scan-apply（或 apply-batch）"
+  "agent_instructions": "当用户要求搜索职位、投递岗位、查看聊天等BOSS直聘操作时：1. 先运行 lakejob status 检查状态 2. 如需登录运行 lakejob login 3. 根据意图调用对应命令 4. 解析返回JSON中的 ok 字段判断成败。推荐工作流：search → 用户手动在BOSS调筛 → scan → scan-apply（或 apply-batch）。如果用户说『按公司聚合选最热公司 + 挑最高职级 HR 再投递』，用 smart-send：先传 keyword/city 走跨公司模式，或传 company/company-id 走单公司模式。"
 }

@@ -1,6 +1,7 @@
 """HTTP client for lakejob FastAPI backend."""
 
 import os
+from typing import Optional
 import httpx
 
 BASE_URL = os.environ.get("LAKEJOB_API", "http://127.0.0.1:8010")
@@ -94,3 +95,64 @@ def add_shortlist(job_url: str, title: str = "", company: str = "", salary: str 
 def remove_shortlist(sid: int):
     resp = httpx.delete(f"{BASE_URL}/api/shortlists/{sid}", timeout=30)
     return resp
+
+
+def company_preview(
+    keyword: str = "",
+    city: str = "",
+    company: str = "",
+    company_id: str = "",
+    districts: Optional[list] = None,
+    company_size: Optional[list] = None,
+    timeout: int = 180,
+):
+    """调用 GET /api/companies/preview。
+    keyword 非空 → 跨公司聚合选最热；否则按 company/company_id 走单公司模式。
+
+    新增：
+      - districts: 区 code 列表（["440118", "440113"]），逗号拼接后透传到 URL
+      - company_size: scale code 列表（["302", "303"]），同上
+    """
+    from urllib.parse import urlencode
+
+    params = {}
+    if keyword:
+        params["keyword"] = keyword
+    if city:
+        params["city"] = city
+    if company:
+        params["company"] = company
+    if company_id:
+        params["company_id"] = company_id
+    if districts:
+        params["districts"] = ",".join(str(x) for x in districts if x)
+    if company_size:
+        params["company_size"] = ",".join(str(x) for x in company_size if x)
+    qs = ("?" + urlencode(params)) if params else ""
+    return _get(f"/api/companies/preview{qs}", timeout=timeout)
+
+
+def smart_send(
+    company: str = "",
+    company_id: str = "",
+    job_url: str = "",
+    top_hr: Optional[dict] = None,
+    hr_name: str = "",
+    greeting: str = "",
+    confirm: bool = False,
+    targets: Optional[list] = None,
+    timeout: int = 180,
+):
+    """调用 POST /api/companies/smart-send。"""
+    payload: dict = {
+        "company": company,
+        "company_id": company_id,
+        "job_url": job_url,
+        "top_hr": top_hr or {},
+        "hr_name": hr_name,
+        "greeting": greeting,
+        "confirm": confirm,
+    }
+    if targets is not None:
+        payload["targets"] = targets
+    return _post("/api/companies/smart-send", json=payload, timeout=timeout)

@@ -481,32 +481,16 @@ class BossAutomation(BossScraper):
 
     # ── 风控冷却退避 ──
     def _trigger_cooldown(self, category: str = "rate_limit") -> None:
-        """命中风控信号时拉长冷却时间。指数退避：60s → 120s → 240s …，封顶 30 分钟。"""
-        self._risk_strikes = min(self._risk_strikes + 1, 6)
-        if category == "banned":
-            base = 1800  # 账号异常：直接冷却 30 分钟
-        elif category == "captcha":
-            base = 300  # 验证码：5 分钟起
-        else:
-            base = 60 * (2 ** (self._risk_strikes - 1))  # 频率限制：指数退避
-        wait = min(base, 1800)
-        self._cooldown_until = max(self._cooldown_until, time.time() + wait)
-        # 仅提示进入冷却，不展示剩余时间，避免在界面显示“冷却剩余时间”
-        print(f"  🧊 风控冷却中（strikes={self._risk_strikes}, 原因={category}）")
+        """已禁用风控冷却期——用户要求不阻塞操作。仅记日志。"""
+        print(f"  [检测到风控信号] category={category}（不阻塞，继续执行）")
 
     def _cooldown_remaining(self) -> float:
-        return max(0.0, self._cooldown_until - time.time())
+        return 0.0
 
     def in_cooldown(self) -> bool:
-        return self._cooldown_remaining() > 0
+        return False
 
     def _respect_cooldown(self) -> bool:
-        """高风险动作前调用：若处于冷却期返回 False（应跳过本次动作）。"""
-        remaining = self._cooldown_remaining()
-        if remaining > 0:
-            # 仅提示冷却中，不显示具体剩余秒数
-            print("  ⏸️ 处于风控冷却期，跳过本次操作")
-            return False
         return True
 
     def _human_pace(self, min_gap: float = 3.0, max_gap: float = 8.0) -> None:
@@ -606,6 +590,21 @@ class BossAutomation(BossScraper):
             if not safety["ok"]:
                 return {"success": False, "message": f"安全检查未通过: {safety['reason']}", "safety": safety}
 
+            # 从详情页提取岗位名和JD（数据库可能没有JD）
+            page_title = ""
+            page_desc = ""
+            try:
+                page_title = self.page.evaluate("""() => {
+                    const el = document.querySelector('.name h1, .job-name h1, .post-name h1, h1.name, .job-title, .title');
+                    return el ? el.innerText.trim() : '';
+                }""")
+                page_desc = self.page.evaluate("""() => {
+                    const el = document.querySelector('.job-detail, .job-sec-text, .detail-content, .job_desc, .job-detail-section');
+                    return el ? el.innerText.trim() : '';
+                }""")
+            except Exception:
+                pass
+
             # 检查是否已投递
             if self._has_text("已沟通", "继续沟通"):
                 existing = get_application_by_url(job_url)
@@ -634,21 +633,56 @@ class BossAutomation(BossScraper):
                 self._trigger_cooldown(category="rate_limit")
                 return {"success": False, "message": "BOSS直聘今日沟通次数已用完", "cooldown": True}
 
-            # 等待聊天窗口加载
-            chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=5000)
+            # 等待聊天窗口加载（BOSS 可能弹窗或跳转）
+            chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=8000)
 
-            # 发送招呼语
+            # 如果详情页没找到聊天框，导航到聊天页找HR发消息
+            if not chat_input:
+                print(f"  ⏳ 详情页未找到聊天框，导航到聊天页...")
+                pause(1, 2)
+
+            # 发送招呼语：先在当前页试，不行就去聊天页找HR对话发
             greeting_text = greeting or get_setting(
                 "greeting_template",
                 "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？",
             )
+            # 如果有页面提取的岗位名，替换模板占位符
+            if page_title and "{job_title}" in greeting_text:
+                greeting_text = greeting_text.replace("{job_title}", page_title)
+            if page_title and "{company}" in greeting_text:
+                company_name = get_application_by_url(job_url)
+                company_name = (company_name or {}).get("company", "") if company_name else ""
+                greeting_text = greeting_text.replace("{company}", company_name or "贵公司")
+
+            # 如果 greeting 是空的或只有模板，且开启了 smart 模式，尝试用页面JD重新生成
+            greeting_mode = get_setting("greeting_mode", "template")
+            if greeting_mode == "smart" and (not greeting or greeting_text == greeting):
+                # greeting 未传入或就是原模板，说明 DB 里没有 JD → 用页面提取的重新生成
+                try:
+                    from boss_replier import generate_greeting_ai
+
+                    style = get_setting("ai_reply_style", "professional")
+                    resume = get_setting("resume_summary", "")
+                    is_boss = bool((get_application_by_url(job_url) or {}).get("is_boss"))
+                    title = page_title or "相关岗位"
+                    company = (get_application_by_url(job_url) or {}).get("company", "贵公司")
+                    greeting_text = generate_greeting_ai(title, company, "", page_desc or "", is_boss, style, resume)
+                    print(f"  📝 用页面JD重新生成招呼语: {greeting_text[:60]!r}...")
+                except Exception as e:
+                    print(f"  ⚠️ 重新生成招呼语失败: {e}")
             greeting_sent = False
-            if chat_input and greeting_text:
-                greeting_sent = self.send_message(greeting_text)
+            if greeting_text:
+                # 1) 当前页直接发（弹窗聊天框）
+                if chat_input:
+                    greeting_sent = self.send_message(greeting_text)
+                # 2) 去聊天页找最近对话发
+                if not greeting_sent:
+                    print(f"  ⏳ 当前页发消息失败，尝试聊天页...")
+                    greeting_sent = self._send_greeting_via_chat_page(greeting_text, job_url)
                 if greeting_sent:
                     print(f"  ✅ 招呼语已发送")
                 else:
-                    print(f"  ⚠️ 招招呼语发送失败")
+                    print(f"  ⚠️ 招呼语发送失败")
 
             # 记录到 SQLite
             existing = get_application_by_url(job_url)
@@ -705,6 +739,7 @@ class BossAutomation(BossScraper):
                 get_or_create_conversation(app_id, hr_name, hr_company, job_title)
 
             increment_daily_stat("applications_sent")
+            self._save_state()
             print(f"  ✅ 投递成功")
             return {"success": True, "message": "投递成功", "application_id": app_id}
 
@@ -761,6 +796,7 @@ class BossAutomation(BossScraper):
             if safety.get("category") in ("banned", "captcha"):
                 print(f"  ⛔ 触发强风控({safety.get('category')})，停止本批等待人工处理")
                 break
+        self._save_state()
         return results
 
     # ══════════════════════════════════════
@@ -1035,6 +1071,84 @@ class BossAutomation(BossScraper):
             print(f"  ⚠️ send_message 失败: {e}")
             return False
 
+    def _send_greeting_via_chat_page(self, greeting_text: str, job_url: str = "") -> bool:
+        """导航到聊天页，找到最近对话（刚才投递的HR），发送招呼语。"""
+        try:
+            # 导航到聊天页
+            self.page.goto("https://www.zhipin.com/web/geek/chat", wait_until="load", timeout=15000)
+            pause(2, 3)
+
+            # 点"全部"tab 看所有对话（刚投递的HR在第一位）
+            for sel in [
+                'span.label-name:has-text("全部")',
+                '.label-name:has-text("全部")',
+                'li:has-text("全部")',
+            ]:
+                try:
+                    tab = self.page.locator(sel).first
+                    if tab.is_visible():
+                        tab.click()
+                        pause(0.5, 1)
+                        break
+                except Exception:
+                    pass
+
+            # 找到第一个对话（刚投递的HR在最前面）
+            conv_selectors = [
+                ".chat-item",
+                'li[role="listitem"]',
+                ".friend-content",
+                '[class*="contact"]',
+                '[class*="conversation"]',
+            ]
+            clicked = False
+            for sel in conv_selectors:
+                try:
+                    items = self.page.locator(sel).all()
+                    for item in items[:5]:
+                        try:
+                            if item.is_visible():
+                                # 跳过"30天内暂无联系人"空状态
+                                txt = item.inner_text()[:30] if hasattr(item, "inner_text") else ""
+                                if "暂无" in txt or "30天" in txt:
+                                    continue
+                                item.click()
+                                clicked = True
+                                pause(0.5, 1)
+                                break
+                        except Exception:
+                            continue
+                    if clicked:
+                        break
+                except Exception:
+                    continue
+
+            if not clicked:
+                # 最后尝试：直接点聊天列表第一个可见项
+                try:
+                    first = self.page.locator("li:visible").first
+                    if first:
+                        first.click()
+                        clicked = True
+                        pause(0.5, 1)
+                except Exception:
+                    pass
+
+            if not clicked:
+                body = ""
+                try:
+                    body = self.page.inner_text("body")[:200]
+                except Exception:
+                    pass
+                print(f"  ⚠️ 聊天页未找到对话，body预览: {body}")
+                return False
+
+            # 在聊天输入框发消息
+            return self.send_message(greeting_text)
+        except Exception as e:
+            print(f"  ⚠️ _send_greeting_via_chat_page 失败: {e}")
+            return False
+
     def _get_chat_security_id(self, hr_name: str = "") -> str:
         """从 BOSS API 或页面提取对方 securityId。"""
         import re
@@ -1243,26 +1357,109 @@ class BossAutomation(BossScraper):
             return False
 
     def send_resume(self) -> bool:
-        """点击「发简历」按钮，等弹窗后点「发送」确认。"""
-        try:
-            btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=5000)
-            if not btn:
-                print("  ⚠️ send_resume: 未找到发简历按钮")
-                return False
-            btn.click()
-            print("  [发简历] 已点击发简历按钮")
-            pause(1, 2)
+        """点击「发简历」按钮，等弹窗后点「发送」确认。
 
-            # 等弹窗出现 → 点「发送」按钮
-            confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=5000)
+        策略：
+        1. 优先用 page.evaluate 在 JS 里精确按 innerText 匹配 toolbar-btn 元素
+           （Playwright `:has-text` 是部分匹配，可能误中其他按钮）
+        2. 用 click() + 多次重试，等待 toolbar 完全渲染
+        3. 弹窗里点「发送」用同样的精确匹配
+        """
+        try:
+            # 等待 toolbar 渲染（最多 8 秒）
+            clicked = False
+            for attempt in range(16):
+                try:
+                    found = self.page.evaluate(
+                        """() => {
+                            const btns = document.querySelectorAll('.toolbar-btn, [class*="toolbar"] [class*="btn"]');
+                            for (const b of btns) {
+                                const txt = (b.innerText || '').trim();
+                                if (txt === '发简历' && b.offsetParent !== null) {
+                                    b.click();
+                                    return {ok: true, txt: txt};
+                                }
+                            }
+                            // 兜底：找所有可见元素中文本完全等于"发简历"的可点击元素
+                            const all = document.querySelectorAll('div, span, button, a');
+                            for (const el of all) {
+                                const txt = (el.innerText || el.textContent || '').trim();
+                                if (txt === '发简历' && el.offsetParent !== null) {
+                                    el.click();
+                                    return {ok: true, txt: txt, fallback: true};
+                                }
+                            }
+                            const all_btns = Array.from(document.querySelectorAll('.toolbar-btn, .toolbar-btn-content'));
+                            const names = all_btns.map(b => `"${(b.innerText||'').trim()}"`).join(', ');
+                            return {ok: false, available: names};
+                        }"""
+                    )
+                    if isinstance(found, dict) and found.get("ok"):
+                        print(
+                            f"  [发简历] 已点击发简历按钮 (txt={found.get('txt')!r}{', fallback' if found.get('fallback') else ''})"
+                        )
+                        clicked = True
+                        break
+                    if attempt == 15 and isinstance(found, dict):
+                        print(f"  ⚠️ send_resume: 未找到发简历按钮，当前工具栏: {found.get('available', '?')}")
+                except Exception as e:
+                    if attempt == 15:
+                        print(f"  ⚠️ send_resume evaluate 失败: {e}")
+                time.sleep(0.5)
+
+            if not clicked:
+                # 最后兜底：用原 selector
+                btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=2000)
+                if not btn:
+                    return False
+                btn.click()
+                print("  [发简历] 已点击发简历按钮 (selector fallback)")
+
+            pause(1.2, 2.2)
+
+            # 等弹窗 → 点「发送」按钮
+            for attempt in range(8):
+                try:
+                    confirmed = self.page.evaluate(
+                        """() => {
+                            const sels = ['.btn-sure-v2.btn-confirm', '.choose-resume-dialog .btn-confirm', '.boss-popup__content .btn-confirm'];
+                            for (const sel of sels) {
+                                const el = document.querySelector(sel);
+                                if (el && el.offsetParent !== null) { el.click(); return {ok: true, sel: sel}; }
+                            }
+                            // 按文本"发送"在弹窗内找
+                            const dlgs = document.querySelectorAll('.choose-resume-dialog, .boss-popup, [class*="dialog"], [class*="popup"]');
+                            for (const dlg of dlgs) {
+                                if (dlg.offsetParent === null) continue;
+                                const btns = dlg.querySelectorAll('button, .btn, [class*="btn"]');
+                                for (const b of btns) {
+                                    const txt = (b.innerText || '').trim();
+                                    if ((txt === '发送' || txt === '确定' || txt === '确认发送') && b.offsetParent !== null) {
+                                        b.click();
+                                        return {ok: true, txt: txt};
+                                    }
+                                }
+                            }
+                            return {ok: false};
+                        }"""
+                    )
+                    if isinstance(confirmed, dict) and confirmed.get("ok"):
+                        pause(0.5, 1)
+                        print(f"  [发简历] 已点发送按钮 ({confirmed.get('sel') or confirmed.get('txt')})")
+                        return True
+                except Exception:
+                    pass
+                time.sleep(0.4)
+
+            # 兜底：原 selector
+            confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=2000)
             if confirm:
                 confirm.click()
                 pause(0.5, 1)
-                print("  [发简历] 已点发送按钮")
+                print("  [发简历] 已点发送按钮 (selector fallback)")
                 return True
 
-            # 兜底：无弹窗但已点击
-            print("  [发简历] 无弹窗，直接完成")
+            print("  [发简历] 无弹窗，按钮已点击但未确认")
             return True
         except Exception as e:
             print(f"  ⚠️ send_resume 失败: {e}")
@@ -1398,10 +1595,18 @@ class BossAutomation(BossScraper):
         return company_id
 
     def fetch_company_legal_rep(self, company_id: str) -> str:
-        """导航到公司介绍页 /gongsi/<id>.html，点开「工商信息」抓「法定代表人」。
+        """从 BOSS 公司列表页注入对象里拿法定代表人。
 
-        注意：法人信息只在 intro 页 (/gongsi/<id>.html) 的工商信息区域，
-        而 jobs 页 (/gongsi/job/<id>.html) 没有。抓不到返回空字符串，不抛异常。
+        关键发现: BOSS 公司列表页
+        https://www.zhipin.com/gongsi/job/<encryptBrandId>.html
+        在 window.__BOSSCOMPANY__ 注入的初始数据里,brandInfo 节点
+        直接带 `legalPerson`(法定代表人姓名)。
+
+        注入结构路径: __BOSSCOMPANY__[1].data[0].brandJobInfo.brandComInfo
+        实际不同版本路径可能不同,这里采用多路径容错:
+          1. window.__BOSSCOMPANY__ 的 brandInfo.legalPerson
+          2. window.__INITIAL_STATE__ 兜底
+        若都拿不到则返回空字符串,不影响主流程。
         """
         cid = (company_id or "").strip()
         if not cid:
@@ -1415,23 +1620,47 @@ class BossAutomation(BossScraper):
         if not self.check_page_safety():
             return ""
 
-        # 工商信息可能在折叠 tab 里，先尝试点开
-        for tab_text in ("工商信息", "公司介绍"):
-            try:
-                loc = self.page.locator(f"text={tab_text}").first
-                if loc.count() > 0 and loc.is_visible():
-                    loc.click(timeout=3000)
-                    pause(1, 2)
-                    break
-            except Exception:
-                continue
-
         try:
-            body_text = self.page.inner_text("body")
+            js = r"""
+            () => {
+                function tryRead(obj, path) {
+                    try {
+                        var cur = obj;
+                        var parts = path.split('.');
+                        for (var i = 0; i < parts.length && cur; i++) {
+                            cur = cur[parts[i]];
+                        }
+                        return (typeof cur === 'string') ? cur : '';
+                    } catch (e) { return ''; }
+                }
+                // 来自真实 BOSS 公司介绍页 __BOSSCOMPANY__ 注入结构路径
+                var paths = [
+                    '__BOSSCOMPANY__.brandInfo.legalPerson',
+                    '__BOSSCOMPANY__.comInfo.legalPerson',
+                    '__BOSSCOMPANY__.brandComInfo.legalPerson',
+                    '__BOSSCOMPANY__.[1].data.[0].brandInfo.legalPerson',
+                    '__BOSSCOMPANY__.[1].data.[0].brandComInfo.legalPerson',
+                    '__BOSSCOMPANY__.[1].data.[0].comInfo.legalPerson',
+                    '__INITIAL_STATE__.data.brandInfo.legalPerson'
+                ];
+                for (var i = 0; i < paths.length; i++) {
+                    var segs = paths[i].split('.');
+                    var root = segs[0];
+                    var rest = segs.slice(1).join('.');
+                    var v = tryRead(window[root], rest);
+                    if (v) return v;
+                }
+                return '';
+            }
+            """
+            result = self.page.evaluate(js) or ""
         except Exception:
             return ""
-        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-        return _extract_legal_rep(body_text, lines)
+
+        result = str(result).strip()
+        if result and len(result) <= 8 and not any(c in result for c in ("(", "（", " ", "\n")):
+            return result
+        return ""
 
     def parse_company_similar_jobs_page(self) -> dict:
         """解析 /gongsi/job/<id>.html 页面。
