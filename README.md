@@ -309,7 +309,6 @@ $ lakejob scan-apply --max-pages 5
 ├── boss_geo.py              # 城市/区/规模 BOSS 编码映射
 ├── boss_replier.py          # AI 回复 + 招呼语 + 简历优化上下文
 ├── boss_state.py            # SQLite 数据持久化
-├── scraper.py               # 通用抓取工具
 ├── pyproject.toml           # 打包 + CLI 入口
 ├── lakejob_cli/             # CLI (18 命令)
 │   ├── cli.py / client.py / output.py / schema.json
@@ -436,14 +435,6 @@ lakejob status             # 浏览器运行状态
 ---
 
 ## ⚙️ 配置
-
-### config.yaml
-
-```yaml
-browser:
-  headless: false
-  profile_dir: ./.boss_profile/firefox_user_data
-```
 
 ### Web 设置项
 

@@ -21,18 +21,13 @@ MODEL = get_setting("ai_model") or "deepseek-chat"
 
 import pymysql
 
-DB = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "wu1364382646",
-    "database": "ai_jobs_db",
-    "charset": "utf8mb4",
-}
+from config import DB, get_conn as _get_conn
+
+# DB 由 config.py 提供，密码从 INTERVIEW_DB_PASSWORD 环境变量读取
 
 
 def get_conn():
-    return pymysql.connect(**DB)
+    return _get_conn()
 
 
 def question_exists(question):

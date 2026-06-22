@@ -47,16 +47,22 @@ for _ in range(100):
 elapsed = time.time() - start
 print(f"3. embedding+检索全流程(100次): {elapsed:.3f}s = {elapsed / 100 * 1000:.1f}ms/次")
 
-# 4. MySQL查询速度
-conn = pymysql.connect(host="127.0.0.1", user="root", password="wu1364382646", database="ai_jobs_db")
-cur = conn.cursor()
-start = time.time()
-for _ in range(100):
-    cur.execute("SELECT id, question, answer FROM interview_qa_pairs LIMIT 5")
-    rows = cur.fetchall()
-elapsed = time.time() - start
-print(f"4. MySQL简单查询(100次): {elapsed:.3f}s = {elapsed / 100 * 1000:.1f}ms/次")
-conn.close()
+# 4. MySQL查询速度（密码从 INTERVIEW_DB_PASSWORD 读取，benchmark.py 不再硬编码）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from config import DB_CONFIG
+
+if not DB_CONFIG["password"]:
+    print("4. MySQL查询: 跳过（INTERVIEW_DB_PASSWORD 未设置）")
+else:
+    conn = pymysql.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    start = time.time()
+    for _ in range(100):
+        cur.execute("SELECT id, question, answer FROM interview_qa_pairs LIMIT 5")
+        rows = cur.fetchall()
+    elapsed = time.time() - start
+    print(f"4. MySQL简单查询(100次): {elapsed:.3f}s = {elapsed / 100 * 1000:.1f}ms/次")
+    conn.close()
 
 # 5. AI API速度（从SQLite设置读取）
 import sys as _sys

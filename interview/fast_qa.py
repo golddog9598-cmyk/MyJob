@@ -14,18 +14,14 @@ import pymysql
 import numpy as np
 
 from llm_client import get_embedding, cosine_similarity
+from config import DB_CONFIG, get_conn as _get_conn
 
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "wu1364382646",
-    "database": "ai_jobs_db",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
 
 SEMANTIC_MATCH_THRESHOLD = 0.65
+
+
+def get_conn():
+    return _get_conn()
 
 
 # ===== 缓存 =====

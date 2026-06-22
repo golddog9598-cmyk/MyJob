@@ -7,20 +7,14 @@ import pymysql
 import json
 from typing import List, Optional, Dict, Any
 from llm_client import get_embedding, cosine_similarity
+from config import DB_CONFIG, get_conn as _get_conn
 
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "wu1364382646",
-    "database": "ai_jobs_db",
-    "charset": "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
+
+__all__ = ["DB_CONFIG", "get_conn", "add_qa_pair", "search_qa_pairs", "list_categories", "get_qa_pair"]
 
 
 def get_conn():
-    return pymysql.connect(**DB_CONFIG)
+    return _get_conn()
 
 
 # ========== 面试问答对操作 ==========

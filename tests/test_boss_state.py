@@ -86,4 +86,4 @@ def test_clean_open_positions_filters_salary_and_ui_noise():
     raw = "5-7K、5-10K、3-5K、职位搜索、AI Agent开发工程师、电商运营、更多"
     positions, count = clean_open_positions(raw)
     assert count == 2
-    assert positions == "AIAgent开发工程师、电商运营"
+    assert positions == "AI Agent开发工程师、电商运营"

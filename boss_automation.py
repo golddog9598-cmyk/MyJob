@@ -8,7 +8,6 @@ import random
 import re
 import time
 from typing import Optional, List, Dict, Any
-from urllib.parse import urljoin
 
 from playwright.sync_api import Locator
 
@@ -35,6 +34,10 @@ from boss_state import (
     get_today_auto_reply_count,
     find_conversation_by_hr_name,
     get_daily_stats,
+    has_company_been_applied,
+    list_applied_companies,
+    save_company_cache,
+    get_cached_company,
 )
 
 # ── 选择器配置（BOSS UI 改版时只改这里，也可通过设置表覆盖）──
@@ -47,10 +50,24 @@ SELECTORS = {
         'span:has-text("立即沟通")',
         'div:has-text("立即沟通")',
     ],
+    # BOSS 2025+ 改成中央浮窗聊天弹窗（URL 仍停留在 /job_detail/...），
+    # 老代码只认 #chat-input 会找不到。补足弹窗内的常见选择器。
     "chat_input": [
         "#chat-input",
         'div[contenteditable="true"]',
+        'textarea[placeholder*="请简"]',
+        'textarea[placeholder*="请输入"]',
+        'input[placeholder*="请简"]',
+        'input[placeholder*="请输入"]',
         '[class*="chat-input"]',
+        '[class*="dialog"] textarea',
+        '[class*="dialog"] [contenteditable="true"]',
+        '[class*="modal"] textarea',
+        '[class*="modal"] [contenteditable="true"]',
+        '[class*="popup"] textarea',
+        '[class*="popup"] [contenteditable="true"]',
+        'textarea',
+        '[contenteditable="true"]',
         '[placeholder*="请输入"]',
     ],
     "chat_send_button": [
@@ -111,20 +128,6 @@ SELECTORS = {
         'button:has-text("返回")',
         'a[href*="/chat"]',
     ],
-    "company_similar_jobs_link": [
-        'a[href*="/gongsi/job/"]',
-        'a:has-text("查看该公司其他职位")',
-        'a:has-text("查看该公司")',
-        'a:has-text("全部职位")',
-        '.company-info a[href*="gongsi"]',
-    ],
-    "company_job_cards": [
-        ".job-card",
-        ".job-primary",
-        "li.job-primary",
-        '[class*="job-card"]',
-        '[class*="job-primary"]',
-    ],
 }
 
 
@@ -147,218 +150,8 @@ def _merge_selectors():
 _merge_selectors()
 
 # ── 绝对上限 ──
-MAX_APPLY_PER_DAY = 30
+MAX_APPLY_PER_DAY = 50
 MAX_AUTO_REPLY_PER_DAY = 200
-
-# ── HR 头衔优先级（数字越大越"高"，用于 pick_top_hr）──
-HR_TITLE_PRIORITY = [
-    ("招聘经理", 100),
-    ("HR经理", 95),
-    ("HRBP", 90),
-    ("HR负责人", 85),
-    ("招聘主管", 80),
-    ("招聘负责人", 75),
-    ("HR主管", 70),
-    ("招聘官", 60),
-    ("HR", 50),
-    ("人事", 40),
-    ("招聘专员", 30),
-    ("HR助理", 20),
-    ("猎头", 10),
-]
-
-
-def _hr_title_score(title: str) -> int:
-    """根据 HR 头衔文本返回优先级分；命中多条取最高。"""
-    if not title:
-        return 0
-    t = title.strip()
-    for kw, score in HR_TITLE_PRIORITY:
-        if kw in t:
-            return score
-    return 0
-
-
-# ── 法人 / 老板识别 ──
-# 中国最常见姓氏：同姓巧合概率高，作为弱信号降权。
-COMMON_SURNAMES = set(
-    "王李张刘陈杨黄赵周吴徐孙朱马胡郭林何高梁郑罗宋谢唐韩曹许邓萧冯曾程蔡彭潘"
-    "袁于董余苏叶吕魏蒋田杜丁沈姜范江傅钟卢汪戴崔任陆廖姚方金邱夏谭韦贾邹石熊"
-    "孟秦阎薛侯雷白龙段郝孔邵史毛常万顾赖武康贺严尹钱施牛洪龚汤陶黎温莫易樊乔"
-)
-
-# 复姓：同姓基本可锁定，作为强信号。
-COMPOUND_SURNAMES = [
-    "欧阳",
-    "太史",
-    "端木",
-    "上官",
-    "司马",
-    "东方",
-    "独孤",
-    "南宫",
-    "万俟",
-    "闻人",
-    "夏侯",
-    "诸葛",
-    "尉迟",
-    "公羊",
-    "赫连",
-    "澹台",
-    "皇甫",
-    "宗政",
-    "濮阳",
-    "公冶",
-    "太叔",
-    "申屠",
-    "公孙",
-    "慕容",
-    "仲孙",
-    "钟离",
-    "长孙",
-    "宇文",
-    "司徒",
-    "鲜于",
-    "司空",
-    "闾丘",
-    "子车",
-    "亓官",
-    "司寇",
-    "巫马",
-    "公西",
-    "颛孙",
-    "乐正",
-    "宰父",
-    "谷梁",
-    "拓跋",
-    "夹谷",
-    "轩辕",
-    "令狐",
-    "段干",
-    "百里",
-    "呼延",
-    "东郭",
-    "南门",
-    "羊舌",
-    "微生",
-    "梁丘",
-    "左丘",
-    "西门",
-    "东里",
-    "仲长",
-    "即墨",
-    "达奚",
-]
-
-
-_LEGAL_REP_NOISE = ("变更", "信息", "登记", "为", "是", "持股", "对外", "及")
-
-
-def _extract_legal_rep(body_text: str, lines: Optional[List[str]] = None) -> str:
-    """从公司页纯文本里抽取「法定代表人」姓名。
-
-    常见格式：
-        法定代表人：张三 / 法定代表人  张三 / 法定代表人\\n张三
-    抽不到返回空字符串。
-    """
-    if not body_text:
-        return ""
-    # 同行 / 紧邻：法定代表人[: ：空白换行]姓名
-    m = re.search(r"法定代表人[\s：:]*([\u4e00-\u9fa5·•・]{2,8})", body_text)
-    if m:
-        name = m.group(1).strip("·•・ ")
-        if name and not any(n in name for n in _LEGAL_REP_NOISE):
-            return name
-    # 兜底：按行找「法定代表人」标签，取下一行非空文本
-    rows = lines or []
-    for i, ln in enumerate(rows):
-        if "法定代表人" in ln and i + 1 < len(rows):
-            cand = rows[i + 1].strip("·•・ ")
-            if re.fullmatch(r"[\u4e00-\u9fa5·•・]{2,8}", cand) and not any(n in cand for n in _LEGAL_REP_NOISE):
-                return cand
-    return ""
-
-
-def _extract_surname(name: str) -> str:
-    """提取姓氏：先匹配复姓，否则取首字。空字符串返回空。"""
-    name = (name or "").strip()
-    if not name:
-        return ""
-    for cs in COMPOUND_SURNAMES:
-        if name.startswith(cs):
-            return cs
-    return name[0]
-
-
-def detect_boss(hr_name: str, legal_rep: str) -> Dict[str, Any]:
-    """根据招聘者姓名与公司法人姓名，判断招聘者是否疑似老板/法人本人。
-
-    返回 {is_boss, confidence, reason, score_bonus}：
-      - 全名完全一致      → high   （几乎肯定本人）
-      - 同姓 + 复姓/罕见姓 → medium （巧合概率低）
-      - 同姓 + 常见姓      → low    （仅供参考）
-      - 缺数据 / 不同姓    → none
-    score_bonus 用于在 pick_top_hr 里加权（数值越大越优先）。
-    """
-    hr_name = (hr_name or "").strip()
-    legal_rep = (legal_rep or "").strip()
-    none = {"is_boss": False, "confidence": "none", "reason": "", "score_bonus": 0}
-    if not hr_name or not legal_rep:
-        return none
-
-    if hr_name == legal_rep:
-        return {
-            "is_boss": True,
-            "confidence": "high",
-            "reason": f"招聘者姓名与法人「{legal_rep}」完全一致",
-            "score_bonus": 1000,
-        }
-
-    hr_surname = _extract_surname(hr_name)
-    rep_surname = _extract_surname(legal_rep)
-    if not hr_surname or hr_surname != rep_surname:
-        return none
-
-    if hr_surname in COMPOUND_SURNAMES or hr_surname not in COMMON_SURNAMES:
-        return {
-            "is_boss": True,
-            "confidence": "medium",
-            "reason": f"与法人同为「{hr_surname}」姓（复姓/罕见姓，巧合概率低）",
-            "score_bonus": 300,
-        }
-
-    return {
-        "is_boss": True,
-        "confidence": "low",
-        "reason": f"与法人同为「{hr_surname}」姓（常见姓，仅供参考）",
-        "score_bonus": 50,
-    }
-
-
-def pick_top_hr(hrs: List[Dict[str, Any]], legal_rep: str = "") -> Optional[Dict[str, Any]]:
-    """从 HR 列表中挑出职务最高的一个。
-    同分时按输入顺序（保持稳定）。输入为空返回 None。
-    每条 hr 至少包含 name / title 字段。
-
-    传入 legal_rep（公司法人姓名）时，疑似老板的 HR 会被加权优先选出，
-    并在返回的 hr dict 上附加 is_boss / boss_confidence / boss_reason 字段。
-    """
-    if not hrs:
-        return None
-    best = None
-    best_score = -1
-    for hr in hrs:
-        title_score = _hr_title_score(hr.get("title") or "")
-        boss = detect_boss(hr.get("name") or "", legal_rep)
-        if legal_rep:
-            hr["is_boss"] = boss["is_boss"]
-            hr["boss_confidence"] = boss["confidence"]
-            hr["boss_reason"] = boss["reason"]
-        total = title_score + boss["score_bonus"]
-        if total > best_score:
-            best_score = total
-            best = hr
-    return best
 
 
 class BossAutomation(BossScraper):
@@ -367,10 +160,6 @@ class BossAutomation(BossScraper):
     def __init__(self, headless=False):
         super().__init__(headless)
         init_db()
-        # 风控冷却状态：检测到频率限制时设置 _cooldown_until，期间暂停高风险操作
-        self._cooldown_until = 0.0
-        self._risk_strikes = 0  # 连续命中风控信号次数，越高退避越久
-        self._last_action_ts = 0.0  # 上一次高风险动作（投递/发消息）时间戳
 
     # ══════════════════════════════════════
     #  底层交互 helpers
@@ -435,72 +224,28 @@ class BossAutomation(BossScraper):
     #  安全检查
     # ══════════════════════════════════════
 
-    def inspect_page_safety(self) -> Dict[str, Any]:
-        """检查页面安全状态，返回结构化结果。
-
-        返回 {ok, reason, category, backoff}：
-          - category: ok / login / captcha / banned / rate_limit / error
-          - backoff: 建议退避秒数（rate_limit 时随 _risk_strikes 递增）
-        同时维护 self._risk_strikes / self._cooldown_until。
-        """
+    def check_page_safety(self) -> bool:
+        """所有自动化操作前检查页面安全状态。"""
         try:
+            url = self.page.url
             body = self.page.inner_text("body")
             body_lower = body.lower()
+
+            if self._login_prompt_visible():
+                print("  ⚠️ 安全检查: 需要重新登录")
+                return False
+            if any(kw in body_lower[:500] for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
+                print("  ⚠️ 安全检查: 检测到验证码")
+                return False
+            if any(kw in body_lower[:500] for kw in ["账号异常", "违规", "限制使用", "冻结"]):
+                print("  ⚠️ 安全检查: 账号异常")
+                return False
+            if any(kw in body_lower[:500] for kw in ["操作太频繁", "稍后再试", "休息一下"]):
+                print("  ⚠️ 安全检查: 操作频率限制")
+                return False
+            return True
         except Exception:
-            return {"ok": True, "reason": "", "category": "error", "backoff": 0}
-
-        if self._login_prompt_visible():
-            return {"ok": False, "reason": "需要重新登录", "category": "login", "backoff": 0}
-
-        head = body_lower[:600]
-        if any(kw in head for kw in ["验证", "滑块", "拼图", "captcha", "verify"]):
-            self._trigger_cooldown(category="captcha")
-            return {"ok": False, "reason": "检测到验证码", "category": "captcha", "backoff": self._cooldown_remaining()}
-        if any(kw in head for kw in ["账号异常", "违规", "限制使用", "冻结"]):
-            self._trigger_cooldown(category="banned")
-            return {"ok": False, "reason": "账号异常", "category": "banned", "backoff": self._cooldown_remaining()}
-        if any(kw in head for kw in ["操作太频繁", "稍后再试", "休息一下", "访问过于频繁", "请求过于频繁"]):
-            self._trigger_cooldown(category="rate_limit")
-            return {
-                "ok": False,
-                "reason": "操作频率限制",
-                "category": "rate_limit",
-                "backoff": self._cooldown_remaining(),
-            }
-
-        # 正常页面：风控信号清零
-        self._risk_strikes = 0
-        return {"ok": True, "reason": "", "category": "ok", "backoff": 0}
-
-    def check_page_safety(self) -> bool:
-        """所有自动化操作前检查页面安全状态。布尔版（向后兼容）。"""
-        status = self.inspect_page_safety()
-        if not status["ok"]:
-            print(f"  ⚠️ 安全检查: {status['reason']}")
-        return status["ok"]
-
-    # ── 风控冷却退避 ──
-    def _trigger_cooldown(self, category: str = "rate_limit") -> None:
-        """已禁用风控冷却期——用户要求不阻塞操作。仅记日志。"""
-        print(f"  [检测到风控信号] category={category}（不阻塞，继续执行）")
-
-    def _cooldown_remaining(self) -> float:
-        return 0.0
-
-    def in_cooldown(self) -> bool:
-        return False
-
-    def _respect_cooldown(self) -> bool:
-        return True
-
-    def _human_pace(self, min_gap: float = 3.0, max_gap: float = 8.0) -> None:
-        """两次高风险动作之间保证最小人性化间隔，避免节奏过于机械。"""
-        now = time.time()
-        elapsed = now - self._last_action_ts
-        target = random.uniform(min_gap, max_gap)
-        if 0 < elapsed < target:
-            time.sleep(target - elapsed)
-        self._last_action_ts = time.time()
+            return True
 
     # ══════════════════════════════════════
     #  Session 保活 & 心跳
@@ -559,13 +304,25 @@ class BossAutomation(BossScraper):
     #  自动投递
     # ══════════════════════════════════════
 
-    def apply_to_job(self, job_url: str, greeting: Optional[str] = None) -> dict:
+    def apply_to_job(
+        self,
+        job_url: str,
+        greeting: Optional[str] = None,
+        company_name: str = "",
+        company_id: str = "",
+        dedup_company: Optional[bool] = None,
+        hr_active_days: Optional[int] = None,
+        hr_active_label: str = "",
+        filter_inactive_hr: Optional[bool] = None,
+    ) -> dict:
         """
         对单个岗位执行投递流程:
-        1. 打开详情页
-        2. 点击"立即沟通"
-        3. 发送招呼语
-        返回 {success, message, application_id}
+        1. 公司去重 (如果 dedup_company=True 且 has_company_been_applied 命中 → 跳过)
+        2. HR 活跃度过滤 (如果 filter_inactive_hr=True 且 hr_active_days > max_hr_inactive_days → 跳过)
+        3. 打开详情页
+        4. 点击"立即沟通"
+        5. 发送招呼语
+        返回 {success, message, application_id, skipped?, matched?, skipped_inactive_hr?}
         """
         if not job_url:
             return {"success": False, "message": "缺少岗位链接"}
@@ -576,34 +333,61 @@ class BossAutomation(BossScraper):
         if today_count >= min(daily_limit, MAX_APPLY_PER_DAY):
             return {"success": False, "message": f"已达今日上限({today_count}条)"}
 
-        # 风控冷却：处于退避期直接跳过，让上层稍后重试
-        if not self._respect_cooldown():
-            return {"success": False, "message": "风控冷却中", "cooldown": True}
+        # 默认值: dedup_company / filter_inactive_hr 走 settings
+        if dedup_company is None:
+            dedup_company = get_setting("dedup_company_by_default", "true") == "true"
+        if filter_inactive_hr is None:
+            filter_inactive_hr = get_setting("filter_inactive_hr", "true") == "true"
+        max_inactive = int(get_setting("max_hr_inactive_days", "7"))
+
+        # ── 1. 公司去重 ──
+        if dedup_company and (company_name or company_id):
+            check = has_company_been_applied(company_name, company_id)
+            if check["applied"]:
+                matched = check.get("matched_name") or company_name or company_id
+                print(f"  ⏭ 公司已发过: {matched} (命中 {check['count']} 条)")
+                return {
+                    "success": True,
+                    "skipped": "company_dedup",
+                    "matched": matched,
+                    "count": check["count"],
+                    "message": f"公司 {matched} 已发过 {check['count']} 次, 跳过",
+                }
+
+        # ── 2. HR 活跃度过滤 (hr_active_days=-1 表示未知, 不挡) ──
+        if filter_inactive_hr and hr_active_days is not None and hr_active_days >= 0:
+            if hr_active_days > max_inactive:
+                print(f"  ⏭ HR {hr_active_days} 天未活跃 (>{max_inactive}天), 跳过")
+                return {
+                    "success": True,
+                    "skipped": "inactive_hr",
+                    "hr_active_days": hr_active_days,
+                    "hr_active_label": hr_active_label,
+                    "message": f"HR {hr_active_days} 天未活跃, 跳过",
+                }
+
+        # 岗位名称关键词过滤：命中 → 不投递（不消耗日限，不入库）
+        # 临时回退：add_application 不接受 status 参数导致投递失败，先简单 skip
+        black_raw = (get_setting("title_filter_keywords", "") or "").strip()
+        if black_raw:
+            job = get_application_by_url(job_url)
+            title = (job["job_title"] if job else "") or ""
+            black_kws = [k.strip() for k in black_raw.split(",") if k.strip()]
+            hit = next((k for k in black_kws if k.lower() in title.lower()), None)
+            if hit:
+                print(f"  🚫 命中关键词「{hit}」，已过滤不投递")
+                return {"success": True, "filtered": True, "message": f"命中关键词「{hit}」"}
 
         print(f"  🚀 投递: {job_url[:60]}...")
 
         try:
-            self.page.goto(job_url, wait_until="load", timeout=45000)
-            pause(2, 4)
+            # 改用 domcontentloaded：详情页有大量外链广告/统计脚本，
+            # 等 load 会卡 10-30s，对投递无意义；dom 出完就够。
+            self.page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
+            pause(0.5, 1)
 
-            safety = self.inspect_page_safety()
-            if not safety["ok"]:
-                return {"success": False, "message": f"安全检查未通过: {safety['reason']}", "safety": safety}
-
-            # 从详情页提取岗位名和JD（数据库可能没有JD）
-            page_title = ""
-            page_desc = ""
-            try:
-                page_title = self.page.evaluate("""() => {
-                    const el = document.querySelector('.name h1, .job-name h1, .post-name h1, h1.name, .job-title, .title');
-                    return el ? el.innerText.trim() : '';
-                }""")
-                page_desc = self.page.evaluate("""() => {
-                    const el = document.querySelector('.job-detail, .job-sec-text, .detail-content, .job_desc, .job-detail-section');
-                    return el ? el.innerText.trim() : '';
-                }""")
-            except Exception:
-                pass
+            if not self.check_page_safety():
+                return {"success": False, "message": "安全检查未通过"}
 
             # 检查是否已投递
             if self._has_text("已沟通", "继续沟通"):
@@ -630,59 +414,31 @@ class BossAutomation(BossScraper):
 
             # 检查限制消息
             if self._has_text("已达上限", "沟通人数已用完", "今日次数已用完", "今日沟通次数已用完"):
-                self._trigger_cooldown(category="rate_limit")
-                return {"success": False, "message": "BOSS直聘今日沟通次数已用完", "cooldown": True}
+                return {"success": False, "message": "BOSS直聘今日沟通次数已用完"}
 
-            # 等待聊天窗口加载（BOSS 可能弹窗或跳转）
-            chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=8000)
+            # 等待聊天窗口加载
+            # BOSS 2025+ 改成中央弹窗，可能 2-8s 才完全渲染
+            chat_input = self._find_element(SELECTORS["chat_input"], timeout_ms=10000)
 
-            # 如果详情页没找到聊天框，导航到聊天页找HR发消息
-            if not chat_input:
-                print(f"  ⏳ 详情页未找到聊天框，导航到聊天页...")
-                pause(1, 2)
-
-            # 发送招呼语：先在当前页试，不行就去聊天页找HR对话发
+            # 发送招呼语
             greeting_text = greeting or get_setting(
                 "greeting_template",
                 "您好，我对贵公司的{job_title}岗位很感兴趣，请问可以详细了解一下吗？",
             )
-            # 如果有页面提取的岗位名，替换模板占位符
-            if page_title and "{job_title}" in greeting_text:
-                greeting_text = greeting_text.replace("{job_title}", page_title)
-            if page_title and "{company}" in greeting_text:
-                company_name = get_application_by_url(job_url)
-                company_name = (company_name or {}).get("company", "") if company_name else ""
-                greeting_text = greeting_text.replace("{company}", company_name or "贵公司")
-
-            # 如果 greeting 是空的或只有模板，且开启了 smart 模式，尝试用页面JD重新生成
-            greeting_mode = get_setting("greeting_mode", "template")
-            if greeting_mode == "smart" and (not greeting or greeting_text == greeting):
-                # greeting 未传入或就是原模板，说明 DB 里没有 JD → 用页面提取的重新生成
-                try:
-                    from boss_replier import generate_greeting_ai
-
-                    style = get_setting("ai_reply_style", "professional")
-                    resume = get_setting("resume_summary", "")
-                    is_boss = bool((get_application_by_url(job_url) or {}).get("is_boss"))
-                    title = page_title or "相关岗位"
-                    company = (get_application_by_url(job_url) or {}).get("company", "贵公司")
-                    greeting_text = generate_greeting_ai(title, company, "", page_desc or "", is_boss, style, resume)
-                    print(f"  📝 用页面JD重新生成招呼语: {greeting_text[:60]!r}...")
-                except Exception as e:
-                    print(f"  ⚠️ 重新生成招呼语失败: {e}")
             greeting_sent = False
-            if greeting_text:
-                # 1) 当前页直接发（弹窗聊天框）
-                if chat_input:
-                    greeting_sent = self.send_message(greeting_text)
-                # 2) 去聊天页找最近对话发
-                if not greeting_sent:
-                    print(f"  ⏳ 当前页发消息失败，尝试聊天页...")
-                    greeting_sent = self._send_greeting_via_chat_page(greeting_text, job_url)
+            if chat_input and greeting_text:
+                greeting_sent = self.send_message(greeting_text)
                 if greeting_sent:
                     print(f"  ✅ 招呼语已发送")
                 else:
-                    print(f"  ⚠️ 招呼语发送失败")
+                    print(f"  ⚠️ 招招呼语发送失败")
+            elif not chat_input:
+                cur_url = ""
+                try:
+                    cur_url = self.page.url
+                except Exception:
+                    pass
+                print(f"  ⚠️ 没找到聊天输入框 (URL: {cur_url[:80]})，跳过招呼语")
 
             # 记录到 SQLite
             existing = get_application_by_url(job_url)
@@ -732,14 +488,14 @@ class BossAutomation(BossScraper):
             app_record = get_application_by_url(job_url) or {}
             hr_name = hr_name or app_record.get("hr_name", "")
             hr_company = app_record.get("company", "")
+            hr_title = app_record.get("hr_title", "")
             job_title = app_record.get("job_title", "")
 
             # 只创建有 HR 名字的会话，避免"未知HR"垃圾数据
             if hr_name and len(hr_name) >= 2:
-                get_or_create_conversation(app_id, hr_name, hr_company, job_title)
+                get_or_create_conversation(app_id, hr_name, hr_company, job_title, hr_title)
 
             increment_daily_stat("applications_sent")
-            self._save_state()
             print(f"  ✅ 投递成功")
             return {"success": True, "message": "投递成功", "application_id": app_id}
 
@@ -747,57 +503,190 @@ class BossAutomation(BossScraper):
             print(f"  ❌ 投递失败: {e}")
             return {"success": False, "message": str(e)}
 
-    def apply_batch(self, job_urls: List[str], greeting_template: Optional[str] = None) -> List[dict]:
-        """批量投递，带间隔延迟 + 风控退避。
+    def apply_batch(
+        self,
+        job_urls: Optional[List[str]] = None,
+        greeting_template: Optional[str] = None,
+        jobs: Optional[List[dict]] = None,
+    ) -> List[dict]:
+        """批量投递，带间隔延迟。可通过设置 batch_delay_sec 控制间隔。
 
-        - 普通间隔由 batch_delay_min/max_sec 控制（随机）
-        - 命中风控冷却时，等待冷却结束再继续，而不是直接放弃整批
-        - 每投递若干条插入一次更长的"喝水休息"，模拟真人节奏
+        支持两种入参:
+        - apply_batch(job_urls=[...])      旧 API, 仅传 URL 列表 (向后兼容)
+        - apply_batch(jobs=[{url, company, company_id, hr_active_days, hr_active_label}, ...])
+                                            新 API, 带去重/HR 过滤所需字段
+
+        智能模式下: 只对第一条调 LLM 生成招呼语, 后续复用同一句,
+        避免每个岗位都等 2-8s 的 LLM 响应.
         """
+        from boss_replier import generate_greeting
+
+        # 兼容旧 API
+        if jobs is None and job_urls is not None:
+            jobs = [{"url": u} for u in job_urls]
+        elif jobs is None:
+            return []
+
+        # 抓去重/HR 过滤设置 (旧 API 走默认 true, 走 settings)
+        dedup_company = get_setting("dedup_company_by_default", "true") == "true"
+        filter_inactive_hr = get_setting("filter_inactive_hr", "true") == "true"
+
+        if not greeting_template and jobs:
+            first = jobs[0]
+            url = first.get("url", "")
+            job = get_application_by_url(url) if url else None
+            title = (job["job_title"] if job else first.get("title", "相关岗位")) or "相关岗位"
+            company = (job["company"] if job else first.get("company", "贵公司")) or "贵公司"
+            jd_text = (job["description"] if job and job.get("description") else first.get("description", "")) or ""
+            style = get_setting("ai_reply_style", "professional")
+            smart = get_setting("greeting_mode", "template") == "smart"
+            greeting_template = generate_greeting(
+                title, company, style=style, jd_text=jd_text, smart=smart
+            )
+            if smart:
+                print(f"  🤖 批量智能招呼语已生成 ({len(greeting_template)}字)，后续 {len(jobs)-1} 条复用")
+
         results = []
         min_delay = int(get_setting("batch_delay_min_sec", "30"))
         max_delay = int(get_setting("batch_delay_max_sec", "90"))
-        # 每投 N 条后来一次长休息（5-10分钟），打散机械节奏
-        rest_every = int(get_setting("batch_rest_every", "8"))
-        applied_since_rest = 0
-
-        for i, url in enumerate(job_urls):
-            # 冷却期：等待结束（最多等一次冷却时长），避免硬撞风控
-            if self.in_cooldown():
-                print("  🧊 批量投递遇冷却，暂缓继续...")
-                # 仍然实际等待冷却结束，但不打印剩余时间
-                wait = self._cooldown_remaining()
-                time.sleep(wait + random.uniform(2, 8))
-
+        for i, j in enumerate(jobs):
             if i > 0:
                 delay = random.uniform(min_delay, max_delay)
                 print(f"  ⏳ 等待 {delay:.0f}s 后投递下一条...")
                 time.sleep(delay)
 
-            # 周期性长休息
-            if rest_every > 0 and applied_since_rest >= rest_every:
-                rest = random.uniform(300, 600)
-                print(f"  ☕ 已连续投递 {applied_since_rest} 条，休息 {rest:.0f}s 降低风控风险...")
-                time.sleep(rest)
-                applied_since_rest = 0
-
-            result = self.apply_to_job(url, greeting_template)
+            url = j.get("url", "")
+            result = self.apply_to_job(
+                url,
+                greeting_template,
+                company_name=j.get("company", ""),
+                company_id=j.get("company_id", ""),
+                dedup_company=dedup_company,
+                hr_active_days=j.get("hr_active_days"),
+                hr_active_label=j.get("hr_active_label", ""),
+                filter_inactive_hr=filter_inactive_hr,
+            )
+            result["_input"] = {k: j.get(k) for k in ("title", "company", "url") if j.get(k)}
             results.append(result)
 
-            if result.get("success"):
-                applied_since_rest += 1
-
-            # 命中"今日上限"：整批停止
             if not result["success"] and "上限" in result.get("message", ""):
-                print("  ⛔ 触达今日投递上限，停止本批")
                 break
-            # 账号异常等强风控：立即停止，交由上层人工处理
-            safety = result.get("safety") or {}
-            if safety.get("category") in ("banned", "captcha"):
-                print(f"  ⛔ 触发强风控({safety.get('category')})，停止本批等待人工处理")
-                break
-        self._save_state()
         return results
+
+    # ══════════════════════════════════════
+    #  翻页扫描 (CHANGES §2)
+    # ══════════════════════════════════════
+
+    def go_to_next_page(self) -> bool:
+        """点 BOSS「下一页」按钮, 失败兜底改 URL ?page=N+1.
+
+        必须在 BOSS 搜索列表页 (`/web/geek/job?...`) 上调用.
+        Returns: True 表示已成功翻到下一页, False 表示已是最后一页.
+        """
+        import urllib.parse
+
+        # 1. 优先点击「下一页」按钮
+        next_selectors = [
+            'a[ka="page-next"]',
+            'a.next',
+            '.page .next',
+            'a:has-text("下一页")',
+            '.pager a:last-child',
+        ]
+        for sel in next_selectors:
+            try:
+                el = self.page.locator(sel).first
+                if el and el.is_visible(timeout=2000):
+                    href = el.get_attribute("href") or ""
+                    disabled = el.get_attribute("class") or ""
+                    if "disabled" in disabled.lower():
+                        return False
+                    el.click()
+                    pause(2, 3)
+                    return True
+            except Exception:
+                continue
+
+        # 2. 兜底: 修改 URL 的 page/page=N 参数
+        try:
+            url = self.page.url
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            current = int((qs.get("page") or ["1"])[0])
+            qs["page"] = [str(current + 1)]
+            new_q = urllib.parse.urlencode({k: v[0] for k, v in qs.items()})
+            new_url = urllib.parse.urlunparse(parsed._replace(query=new_q))
+            self.page.goto(new_url, wait_until="domcontentloaded", timeout=20000)
+            pause(2, 3)
+            return True
+        except Exception as e:
+            print(f"  ⚠️ 翻页失败: {e}")
+            return False
+
+    def scan_and_apply_all_pages(
+        self,
+        max_pages: int = 5,
+        greeting: Optional[str] = None,
+        dedup_company: bool = True,
+        filter_inactive_hr: bool = True,
+    ) -> dict:
+        """翻 N 页扫描 + 投递. 返回 {pages_processed, total_scanned, total_applied, total_failed, total_skipped_company, total_skipped_inactive_hr}.
+
+        - max_pages: 最多翻几页 (含当前页), 默认 5
+        - dedup_company: 跳过已发公司
+        - filter_inactive_hr: 跳过 HR 长时间不活跃
+        """
+        result = {
+            "pages_processed": 0,
+            "total_scanned": 0,
+            "total_applied": 0,
+            "total_failed": 0,
+            "total_skipped_company": 0,
+            "total_skipped_inactive_hr": 0,
+            "total_filtered_keyword": 0,
+        }
+
+        for page_idx in range(max_pages):
+            cards = self.scan_current_page()
+            result["pages_processed"] += 1
+            result["total_scanned"] += len(cards)
+            print(f"  📄 第 {page_idx+1}/{max_pages} 页: {len(cards)} 条岗位")
+
+            if not cards:
+                print(f"  ⚠️ 第 {page_idx+1} 页无岗位, 提前结束")
+                break
+
+            for j in cards:
+                r = self.apply_to_job(
+                    j.get("url", ""),
+                    greeting,
+                    company_name=j.get("company", ""),
+                    company_id=j.get("company_id", ""),
+                    dedup_company=dedup_company,
+                    hr_active_days=j.get("hr_active_days"),
+                    hr_active_label=j.get("hr_active_label", ""),
+                    filter_inactive_hr=filter_inactive_hr,
+                )
+                if r.get("skipped") == "company_dedup":
+                    result["total_skipped_company"] += 1
+                elif r.get("skipped") == "inactive_hr":
+                    result["total_skipped_inactive_hr"] += 1
+                elif r.get("filtered"):
+                    result["total_filtered_keyword"] += 1
+                elif r.get("success") and r.get("application_id"):
+                    result["total_applied"] += 1
+                elif not r.get("success"):
+                    result["total_failed"] += 1
+                    if "上限" in r.get("message", ""):
+                        print(f"  ⛔ 达到日限, 停止翻页")
+                        return result
+
+            if page_idx < max_pages - 1:
+                if not self.go_to_next_page():
+                    print(f"  ℹ️ 已是最后一页, 停止翻页")
+                    break
+
+        return result
 
     # ══════════════════════════════════════
     #  聊天监控
@@ -819,6 +708,38 @@ class BossAutomation(BossScraper):
                 except Exception:
                     pass
             return self.check_page_safety()
+        except Exception:
+            return False
+
+    def switch_to_all_conversations(self) -> bool:
+        """切换到「全部」会话标签。"""
+        try:
+            for sel in ['span.label-name:has-text("全部")', 'li:has-text("全部")', '.label-name:has-text("全部")']:
+                try:
+                    tab = self.page.locator(sel).first
+                    if tab.is_visible():
+                        tab.click()
+                        pause(1, 2)
+                        return True
+                except Exception:
+                    pass
+            return False
+        except Exception:
+            return False
+
+    def switch_to_unread_conversations(self) -> bool:
+        """切换到「未读」会话标签。"""
+        try:
+            for sel in ['span.label-name:has-text("未读")', 'li:has-text("未读")', '.label-name:has-text("未读")']:
+                try:
+                    tab = self.page.locator(sel).first
+                    if tab.is_visible():
+                        tab.click()
+                        pause(1, 2)
+                        return True
+                except Exception:
+                    pass
+            return False
         except Exception:
             return False
 
@@ -854,6 +775,37 @@ class BossAutomation(BossScraper):
                         }""")
                             or ""
                         )
+                    # 提取岗位名：优先精确 class，兜底用文本匹配
+                    job_title = ""
+                    try:
+                        _jt = (el.evaluate("""(el) => {
+                            // 优先：精确 class
+                            let el2 = el.querySelector('.position-name, .job-name');
+                            if (el2) return (el2.innerText || '').trim();
+                            // 兜底：从 innerText 第二行找岗位名（格式：HR名\n公司名\n岗位名...）
+                            const lines = (el.innerText || '').split('\\n').map(l=>l.trim()).filter(Boolean);
+                            // 跳过 HR 名（第一行）和时间行
+                            for (let i = 1; i < lines.length; i++) {
+                                const line = lines[i];
+                                // 跳过纯数字、时间、状态标签
+                                if (/^\\d/.test(line)) continue;
+                                if (/^\\d{1,2}:\\d{2}/.test(line)) continue;
+                                if (/^\\[.+\\]$/.test(line)) continue;
+                                // 岗位名特征：2-15字，可能包含"运营""专员""经理""助理"等关键词
+                                const jobKeywords = ['运营','专员','经理','助理','主管','总监','编辑','设计',
+                                    '开发','工程师','销售','客服','文案','策划','推广','主播','摄影',
+                                    '剪辑','行政','人事','财务','会计','出纳','采购','物流','仓储',
+                                    '教师','培训','咨询','分析','产品','前端','后端','测试','运维'];
+                                if (line.length >= 2 && line.length <= 15 && jobKeywords.some(k => line.includes(k))) {
+                                    return line;
+                                }
+                            }
+                            return '';
+                        }""") or "").strip()
+                        if _jt and len(_jt) >= 2:
+                            job_title = _jt
+                    except Exception:
+                        pass
                     has_unread = False
                     try:
                         badge = el.locator('.red-dot, [class*="unread"]').first
@@ -866,6 +818,9 @@ class BossAutomation(BossScraper):
                             "has_unread": has_unread,
                             "element": el,
                             "hr_name": hr_name,
+                            "hr_company": hr_company,
+                            "hr_title": hr_title,
+                            "job_title": job_title,
                         }
                     )
                 except Exception:
@@ -922,6 +877,88 @@ class BossAutomation(BossScraper):
                     const m = (text || '').match(/(^|\\n)\\s*(已读|未读|送达|发送失败|已发送)\\s*(\\n|$)/);
                     return m ? m[2] : '';
                 };
+                // 解析时间文本为 ISO 字符串
+                const parseTime = (text) => {
+                    if (!text) return '';
+                    const now = new Date();
+                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    const hm = text.match(/(\\d{1,2}):(\\d{2})/);
+                    if (!hm) return '';
+                    const timePart = hm[1].padStart(2,'0') + ':' + hm[2].padStart(2,'0');
+                    // 匹配 "14:30" 格式
+                    if (/^\\d{1,2}:\\d{2}$/.test(text.trim())) {
+                        const d = new Date(today);
+                        d.setHours(parseInt(hm[1]), parseInt(hm[2]), 0, 0);
+                        return d.toISOString();
+                    }
+                    // 匹配 "昨天 14:30" 格式
+                    if (/^昨天/.test(text)) {
+                        const d = new Date(today);
+                        d.setDate(d.getDate() - 1);
+                        d.setHours(parseInt(hm[1]), parseInt(hm[2]), 0, 0);
+                        return d.toISOString();
+                    }
+                    // 匹配 "06-12 14:30" 或 "2024-06-12 14:30" 格式
+                    const md = text.match(/(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})/);
+                    if (md) {
+                        const d = new Date(parseInt(md[1]), parseInt(md[2]) - 1, parseInt(md[3]), parseInt(hm[1]), parseInt(hm[2]), 0, 0);
+                        return d.toISOString();
+                    }
+                    const md2 = text.match(/(\\d{1,2})[-/](\\d{1,2})\\s/);
+                    if (md2) {
+                        const d = new Date(now.getFullYear(), parseInt(md2[1]) - 1, parseInt(md2[2]), parseInt(hm[1]), parseInt(hm[2]), 0, 0);
+                        return d.toISOString();
+                    }
+                    return '';
+                };
+                // 收集所有时间分隔线和时间戳
+                const timePoints = [];
+                const timeSelectors = [
+                    '[class*="time-divider"]',
+                    '[class*="message-time"]',
+                    '[class*="msg-time"]',
+                    'li[class*="time"]',
+                    '.chat-time',
+                    '[class*="chat"] [class*="time"]',
+                    '[class*="message"] [class*="time"]',
+                    '[class*="msg"] [class*="time"]',
+                ];
+                document.querySelectorAll(timeSelectors.join(', ')).forEach(el => {
+                    if (!visible(el)) return;
+                    const r = el.getBoundingClientRect();
+                    if (r.left + r.width / 2 < vw * 0.35) return;
+                    const text = (el.innerText || '').trim();
+                    const time = parseTime(text);
+                    if (time && text.length < 30) {
+                        timePoints.push({time: time, top: r.top});
+                    }
+                });
+                // 也从消息列表的兄弟元素中查找时间文本
+                const msgContainer = document.querySelector('[class*="chat-list"], [class*="message-list"], [class*="msg-list"]');
+                if (msgContainer) {
+                    msgContainer.querySelectorAll(':scope > li, :scope > div').forEach(el => {
+                        if (!visible(el)) return;
+                        const text = (el.innerText || '').trim();
+                        if (text.length < 30 && /^\\d/.test(text)) {
+                            const r = el.getBoundingClientRect();
+                            const time = parseTime(text);
+                            if (time) {
+                                timePoints.push({time: time, top: r.top});
+                            }
+                        }
+                    });
+                }
+                timePoints.sort((a, b) => a.top - b.top);
+                // 查找最近的时间点
+                const findTime = (msgTop) => {
+                    let best = '';
+                    for (const tp of timePoints) {
+                        if (tp.top <= msgTop) {
+                            best = tp.time;
+                        }
+                    }
+                    return best;
+                };
                 const push = (el, contentEl) => {
                     if (!visible(el)) return;
                     const r = el.getBoundingClientRect();
@@ -934,7 +971,8 @@ class BossAutomation(BossScraper):
                     const cls = el.className || '';
                     const sender = cls.includes('item-myself') || cls.includes('myself') || cls.includes('self') || r.left > vw * 0.52 ? 'me' : 'hr';
                     const status = sender === 'me' ? pickStatus(fullText) : '';
-                    result.push({sender: sender, content: content, status: status});
+                    let time = findTime(r.top);
+                    result.push({sender: sender, content: content, status: status, time: time});
                 };
 
                 document.querySelectorAll('li.message-item, li[class*="message-item"]').forEach(el => push(el));
@@ -947,8 +985,76 @@ class BossAutomation(BossScraper):
         except Exception:
             return []
 
+    def read_chat_online_status(self) -> str:
+        """读取当前聊天窗口的对方在线状态。"""
+        try:
+            status = self.page.evaluate("""() => {
+                // 查找在线状态图片元素
+                const img = document.querySelector('img.chat-online-stats, img[class*="chat-online-stats"]');
+                if (!img) return '';
+                // 通过 alt 或 src 判断状态
+                const alt = (img.alt || '').trim();
+                if (alt) return alt;
+                // 通过图片 src 中的关键词判断
+                const src = (img.src || '').toLowerCase();
+                if (src.includes('online') || src.includes('active')) return '在线';
+                if (src.includes('offline') || src.includes('busy')) return '离线';
+                // 检查父元素的文本
+                const parent = img.parentElement;
+                if (parent) {
+                    const text = (parent.innerText || '').trim();
+                    if (/在线/.test(text)) return '在线';
+                    if (/离线/.test(text)) return '离线';
+                    if (/忙碌/.test(text)) return '忙碌';
+                }
+                // 如果有图片但无法判断，返回"在线"（因为显示图片通常意味着在线）
+                return '在线';
+            }""")
+            return status or ''
+        except Exception:
+            return ''
+
+    def read_chat_header_info(self) -> dict:
+        """读取当前聊天窗口头部岗位信息（岗位名 · 薪资 · 城市）。
+
+        BOSS 直聘 DOM 结构（已验证）：
+          .position-content > .position-name → 岗位名
+          .position-content > .salary     → 薪资
+          .position-content > .city       → 城市
+        """
+        try:
+            info = self.page.evaluate("""() => {
+                const result = { jobTitle: '', salary: '', city: '' };
+                const pn = document.querySelector('.position-name');
+                if (pn) result.jobTitle = (pn.innerText || '').trim();
+                const sal = document.querySelector('.salary');
+                if (sal) result.salary = (sal.innerText || '').trim();
+                // .city 可能有多个，取 chat-position-content 里的那个
+                const cityEl = document.querySelector('.chat-position-content .city')
+                    || document.querySelector('.position-content .city')
+                    || document.querySelector('.city');
+                if (cityEl) {
+                    result.city = (cityEl.innerText || '').trim();
+                    // 诊断：记录 city 元素的完整信息
+                    result._cityDebug = `class=${cityEl.className}, text=${result.city}, data=${JSON.stringify(cityEl.dataset||{})}`;
+                }
+                return result;
+            }""")
+            job_title = (info.get('jobTitle') or '') if info else ''
+            salary = (info.get('salary') or '') if info else ''
+            city = (info.get('city') or '') if info else ''
+            if info.get('_cityDebug'):
+                print(f"  [header诊断] {info['_cityDebug']}")
+            return info or {'jobTitle': '', 'salary': '', 'city': ''}
+        except Exception as e:
+            print(f"  ⚠️ read_chat_header_info 异常: {e}")
+            return {'jobTitle': '', 'salary': '', 'city': ''}
+
     def open_conversation_by_name(self, hr_name: str) -> bool:
-        """在聊天页中按 HR 名字定位并打开对应会话。"""
+        """在聊天页中按 HR 名字定位并打开对应会话。
+        
+        先在当前标签页查找，找不到则切换到「全部」标签查找。
+        """
         try:
             current_url = self.page.url
             if "/web/geek/chat" not in current_url:
@@ -1015,6 +1121,72 @@ class BossAutomation(BossScraper):
             if clicked:
                 pause(1, 2)
                 return True
+            
+            # 当前标签没找到，切换到「全部」标签再试一次
+            print(f"  [会话] 当前标签未找到 '{hr_name}'，切换到「全部」标签查找")
+            self.switch_to_all_conversations()
+            pause(1, 2)
+            
+            # 在「全部」标签中重新查找
+            for sel in [
+                f'li[role="listitem"]:has-text("{hr_name}")',
+                f'.user-list li:has-text("{hr_name}")',
+                f'[class*="friend"]:has-text("{hr_name}")',
+                f'text="{hr_name}"',
+            ]:
+                try:
+                    loc = self.page.locator(sel).first
+                    if loc.count() > 0 and loc.is_visible():
+                        loc.click(force=True, timeout=3000)
+                        pause(1, 2)
+                        return True
+                except Exception:
+                    pass
+            
+            # 「全部」标签兜底查找
+            clicked2 = self.page.evaluate(
+                """(name) => {
+                    const visible = el => {
+                        const r = el.getBoundingClientRect();
+                        const s = getComputedStyle(el);
+                        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+                    };
+                    const candidates = [];
+                    const selectors = [
+                        '.user-list li', 'li[role="listitem"]', '.friend-content',
+                        '[class*="friend"]', '[class*="conversation"]', '[class*="chat-item"]'
+                    ];
+                    document.querySelectorAll(selectors.join(',')).forEach(el => {
+                        const text = (el.innerText || '');
+                        if (text.length < 3 || text.length > 200) return;
+                        if (!text.includes(name)) return;
+                        if (!visible(el)) return;
+                        const rect = el.getBoundingClientRect();
+                        const nameEl = el.querySelector('.name-text, [class*="name"]');
+                        const nameText = (nameEl && nameEl.innerText || '').trim();
+                        const exact = nameText === name || text.split('\\n').some(line => line.trim() === name);
+                        candidates.push({el: el, exact: exact ? 1 : 0, area: rect.width * rect.height, top: rect.top});
+                    });
+                    candidates.sort((a,b) => b.exact - a.exact || a.area - b.area || a.top - b.top);
+                    for (const c of candidates) {
+                        try {
+                            c.el.scrollIntoView({block: 'center'});
+                            const r = c.el.getBoundingClientRect();
+                            const opts = {bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2};
+                            c.el.dispatchEvent(new MouseEvent('mousedown', opts));
+                            c.el.dispatchEvent(new MouseEvent('mouseup', opts));
+                            c.el.dispatchEvent(new MouseEvent('click', opts));
+                            return true;
+                        } catch(e) {}
+                    }
+                    return false;
+                }""",
+                hr_name,
+            )
+            if clicked2:
+                pause(1, 2)
+                return True
+            
             return False
         except Exception as e:
             print(f"  ⚠️ 打开会话失败 ({hr_name}): {e}")
@@ -1023,16 +1195,21 @@ class BossAutomation(BossScraper):
     def send_message(self, text: str, fast: bool = True) -> bool:
         """逐字模拟键盘输入 + Enter 发送，确保 BOSS 检测到输入事件。"""
         try:
-            # 点击输入框激活
-            try:
-                self.page.locator("#chat-input").first.click()
-                time.sleep(0.15)
-            except Exception:
+            # 点击输入框激活 — 按 SELECTORS 顺序尝试（含弹窗/textarea 兜底）
+            clicked = False
+            for sel in SELECTORS["chat_input"]:
                 try:
-                    self.page.locator('[contenteditable="true"]').first.click()
-                    time.sleep(0.15)
+                    loc = self.page.locator(sel).first
+                    if loc.is_visible():
+                        loc.click()
+                        time.sleep(0.15)
+                        clicked = True
+                        break
                 except Exception:
-                    pass
+                    continue
+            if not clicked:
+                print("  ⚠️ send_message 找不到可点击的聊天输入框")
+                return False
 
             # 清除已有内容
             try:
@@ -1062,91 +1239,15 @@ class BossAutomation(BossScraper):
             try:
                 self.page.keyboard.press("Enter")
                 pause(0.3, 0.5)
-                return True
+                body = self.page.inner_text("body")
+                if check in body:
+                    return True
             except Exception:
                 pass
 
             return False
         except Exception as e:
             print(f"  ⚠️ send_message 失败: {e}")
-            return False
-
-    def _send_greeting_via_chat_page(self, greeting_text: str, job_url: str = "") -> bool:
-        """导航到聊天页，找到最近对话（刚才投递的HR），发送招呼语。"""
-        try:
-            # 导航到聊天页
-            self.page.goto("https://www.zhipin.com/web/geek/chat", wait_until="load", timeout=15000)
-            pause(2, 3)
-
-            # 点"全部"tab 看所有对话（刚投递的HR在第一位）
-            for sel in [
-                'span.label-name:has-text("全部")',
-                '.label-name:has-text("全部")',
-                'li:has-text("全部")',
-            ]:
-                try:
-                    tab = self.page.locator(sel).first
-                    if tab.is_visible():
-                        tab.click()
-                        pause(0.5, 1)
-                        break
-                except Exception:
-                    pass
-
-            # 找到第一个对话（刚投递的HR在最前面）
-            conv_selectors = [
-                ".chat-item",
-                'li[role="listitem"]',
-                ".friend-content",
-                '[class*="contact"]',
-                '[class*="conversation"]',
-            ]
-            clicked = False
-            for sel in conv_selectors:
-                try:
-                    items = self.page.locator(sel).all()
-                    for item in items[:5]:
-                        try:
-                            if item.is_visible():
-                                # 跳过"30天内暂无联系人"空状态
-                                txt = item.inner_text()[:30] if hasattr(item, "inner_text") else ""
-                                if "暂无" in txt or "30天" in txt:
-                                    continue
-                                item.click()
-                                clicked = True
-                                pause(0.5, 1)
-                                break
-                        except Exception:
-                            continue
-                    if clicked:
-                        break
-                except Exception:
-                    continue
-
-            if not clicked:
-                # 最后尝试：直接点聊天列表第一个可见项
-                try:
-                    first = self.page.locator("li:visible").first
-                    if first:
-                        first.click()
-                        clicked = True
-                        pause(0.5, 1)
-                except Exception:
-                    pass
-
-            if not clicked:
-                body = ""
-                try:
-                    body = self.page.inner_text("body")[:200]
-                except Exception:
-                    pass
-                print(f"  ⚠️ 聊天页未找到对话，body预览: {body}")
-                return False
-
-            # 在聊天输入框发消息
-            return self.send_message(greeting_text)
-        except Exception as e:
-            print(f"  ⚠️ _send_greeting_via_chat_page 失败: {e}")
             return False
 
     def _get_chat_security_id(self, hr_name: str = "") -> str:
@@ -1357,109 +1458,26 @@ class BossAutomation(BossScraper):
             return False
 
     def send_resume(self) -> bool:
-        """点击「发简历」按钮，等弹窗后点「发送」确认。
-
-        策略：
-        1. 优先用 page.evaluate 在 JS 里精确按 innerText 匹配 toolbar-btn 元素
-           （Playwright `:has-text` 是部分匹配，可能误中其他按钮）
-        2. 用 click() + 多次重试，等待 toolbar 完全渲染
-        3. 弹窗里点「发送」用同样的精确匹配
-        """
+        """点击「发简历」按钮，等弹窗后点「发送」确认。"""
         try:
-            # 等待 toolbar 渲染（最多 8 秒）
-            clicked = False
-            for attempt in range(16):
-                try:
-                    found = self.page.evaluate(
-                        """() => {
-                            const btns = document.querySelectorAll('.toolbar-btn, [class*="toolbar"] [class*="btn"]');
-                            for (const b of btns) {
-                                const txt = (b.innerText || '').trim();
-                                if (txt === '发简历' && b.offsetParent !== null) {
-                                    b.click();
-                                    return {ok: true, txt: txt};
-                                }
-                            }
-                            // 兜底：找所有可见元素中文本完全等于"发简历"的可点击元素
-                            const all = document.querySelectorAll('div, span, button, a');
-                            for (const el of all) {
-                                const txt = (el.innerText || el.textContent || '').trim();
-                                if (txt === '发简历' && el.offsetParent !== null) {
-                                    el.click();
-                                    return {ok: true, txt: txt, fallback: true};
-                                }
-                            }
-                            const all_btns = Array.from(document.querySelectorAll('.toolbar-btn, .toolbar-btn-content'));
-                            const names = all_btns.map(b => `"${(b.innerText||'').trim()}"`).join(', ');
-                            return {ok: false, available: names};
-                        }"""
-                    )
-                    if isinstance(found, dict) and found.get("ok"):
-                        print(
-                            f"  [发简历] 已点击发简历按钮 (txt={found.get('txt')!r}{', fallback' if found.get('fallback') else ''})"
-                        )
-                        clicked = True
-                        break
-                    if attempt == 15 and isinstance(found, dict):
-                        print(f"  ⚠️ send_resume: 未找到发简历按钮，当前工具栏: {found.get('available', '?')}")
-                except Exception as e:
-                    if attempt == 15:
-                        print(f"  ⚠️ send_resume evaluate 失败: {e}")
-                time.sleep(0.5)
+            btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=5000)
+            if not btn:
+                print("  ⚠️ send_resume: 未找到发简历按钮")
+                return False
+            btn.click()
+            print("  [发简历] 已点击发简历按钮")
+            pause(1, 2)
 
-            if not clicked:
-                # 最后兜底：用原 selector
-                btn = self._find_element(SELECTORS["resume_attach_btn"], timeout_ms=2000)
-                if not btn:
-                    return False
-                btn.click()
-                print("  [发简历] 已点击发简历按钮 (selector fallback)")
-
-            pause(1.2, 2.2)
-
-            # 等弹窗 → 点「发送」按钮
-            for attempt in range(8):
-                try:
-                    confirmed = self.page.evaluate(
-                        """() => {
-                            const sels = ['.btn-sure-v2.btn-confirm', '.choose-resume-dialog .btn-confirm', '.boss-popup__content .btn-confirm'];
-                            for (const sel of sels) {
-                                const el = document.querySelector(sel);
-                                if (el && el.offsetParent !== null) { el.click(); return {ok: true, sel: sel}; }
-                            }
-                            // 按文本"发送"在弹窗内找
-                            const dlgs = document.querySelectorAll('.choose-resume-dialog, .boss-popup, [class*="dialog"], [class*="popup"]');
-                            for (const dlg of dlgs) {
-                                if (dlg.offsetParent === null) continue;
-                                const btns = dlg.querySelectorAll('button, .btn, [class*="btn"]');
-                                for (const b of btns) {
-                                    const txt = (b.innerText || '').trim();
-                                    if ((txt === '发送' || txt === '确定' || txt === '确认发送') && b.offsetParent !== null) {
-                                        b.click();
-                                        return {ok: true, txt: txt};
-                                    }
-                                }
-                            }
-                            return {ok: false};
-                        }"""
-                    )
-                    if isinstance(confirmed, dict) and confirmed.get("ok"):
-                        pause(0.5, 1)
-                        print(f"  [发简历] 已点发送按钮 ({confirmed.get('sel') or confirmed.get('txt')})")
-                        return True
-                except Exception:
-                    pass
-                time.sleep(0.4)
-
-            # 兜底：原 selector
-            confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=2000)
+            # 等弹窗出现 → 点「发送」按钮
+            confirm = self._find_element(SELECTORS["resume_confirm_btn"], timeout_ms=5000)
             if confirm:
                 confirm.click()
                 pause(0.5, 1)
-                print("  [发简历] 已点发送按钮 (selector fallback)")
+                print("  [发简历] 已点发送按钮")
                 return True
 
-            print("  [发简历] 无弹窗，按钮已点击但未确认")
+            # 兜底：无弹窗但已点击
+            print("  [发简历] 无弹窗，直接完成")
             return True
         except Exception as e:
             print(f"  ⚠️ send_resume 失败: {e}")
@@ -1526,310 +1544,6 @@ class BossAutomation(BossScraper):
         print(f"  [扫描] 从当前页面提取到 {len(jobs)} 个岗位")
         return jobs
 
-    # ══════════════════════════════════════
-    #  公司画像（用于 smart-send：先看公司再投递）
-    # ══════════════════════════════════════
-
-    def goto_company_similar_jobs(self, job_url: str) -> str:
-        """从岗位详情页找到"查看该公司其他职位"链接并跳过去，返回 companyId。
-        找不到链接抛 RuntimeError。"""
-        if not job_url:
-            raise RuntimeError("缺少岗位URL")
-        try:
-            self.page.goto(job_url, wait_until="load", timeout=45000)
-        except Exception as e:
-            raise RuntimeError(f"打开岗位详情页失败: {e}")
-        pause(1, 2)
-
-        href = None
-        for sel in SELECTORS["company_similar_jobs_link"]:
-            try:
-                loc = self.page.locator(sel).first
-                if loc.count() > 0 and loc.is_visible():
-                    href = loc.get_attribute("href")
-                    if href and "/gongsi/job/" in href:
-                        break
-            except Exception:
-                continue
-
-        # 回退：找不到 jobs 页链接时，用本岗位卡片关联的公司介绍页 /gongsi/<id>.html
-        if not href or "/gongsi/job/" not in (href or ""):
-            try:
-                cid = self.page.evaluate(
-                    r"""() => {
-                    // 优先取页面内指向公司主页的链接（排除推荐区）
-                    const a = document.querySelector('a[ka="company-name"][href*="/gongsi/"]')
-                        || document.querySelector('.company-info a[href*="/gongsi/"]')
-                        || document.querySelector('a[href*="/gongsi/"]:not([href$="/gongsi/"])');
-                    if (!a) return "";
-                    const m = (a.getAttribute('href') || '').match(/\/gongsi\/(?:job\/)?([0-9a-zA-Z]+~?)/);
-                    return m ? m[1] : "";
-                }"""
-                )
-                if cid:
-                    # 直接拼 jobs 页 URL 跳过去
-                    full_url = f"https://www.zhipin.com/gongsi/job/{cid}.html"
-                    self.page.goto(full_url, wait_until="load", timeout=45000)
-                    pause(2, 3)
-                    if not self.check_page_safety():
-                        raise RuntimeError("公司页安全检查未通过（可能被风控）")
-                    return cid
-            except RuntimeError:
-                raise
-            except Exception:
-                pass
-
-        if not href:
-            raise RuntimeError("未找到 '查看该公司其他职位' 链接")
-
-        m = re.search(r"/gongsi/job/([0-9a-zA-Z]+~?)", href)
-        company_id = m.group(1) if m else ""
-        full_url = urljoin("https://www.zhipin.com", href.split("?")[0])
-        try:
-            self.page.goto(full_url, wait_until="load", timeout=45000)
-        except Exception as e:
-            raise RuntimeError(f"打开公司页失败: {e}")
-        pause(2, 3)
-        if not self.check_page_safety():
-            raise RuntimeError("公司页安全检查未通过（可能被风控）")
-        return company_id
-
-    def fetch_company_legal_rep(self, company_id: str) -> str:
-        """从 BOSS 公司列表页注入对象里拿法定代表人。
-
-        关键发现: BOSS 公司列表页
-        https://www.zhipin.com/gongsi/job/<encryptBrandId>.html
-        在 window.__BOSSCOMPANY__ 注入的初始数据里,brandInfo 节点
-        直接带 `legalPerson`(法定代表人姓名)。
-
-        注入结构路径: __BOSSCOMPANY__[1].data[0].brandJobInfo.brandComInfo
-        实际不同版本路径可能不同,这里采用多路径容错:
-          1. window.__BOSSCOMPANY__ 的 brandInfo.legalPerson
-          2. window.__INITIAL_STATE__ 兜底
-        若都拿不到则返回空字符串,不影响主流程。
-        """
-        cid = (company_id or "").strip()
-        if not cid:
-            return ""
-        intro_url = f"https://www.zhipin.com/gongsi/{cid}.html"
-        try:
-            self.page.goto(intro_url, wait_until="load", timeout=45000)
-        except Exception:
-            return ""
-        pause(1, 2)
-        if not self.check_page_safety():
-            return ""
-
-        try:
-            js = r"""
-            () => {
-                function tryRead(obj, path) {
-                    try {
-                        var cur = obj;
-                        var parts = path.split('.');
-                        for (var i = 0; i < parts.length && cur; i++) {
-                            cur = cur[parts[i]];
-                        }
-                        return (typeof cur === 'string') ? cur : '';
-                    } catch (e) { return ''; }
-                }
-                // 来自真实 BOSS 公司介绍页 __BOSSCOMPANY__ 注入结构路径
-                var paths = [
-                    '__BOSSCOMPANY__.brandInfo.legalPerson',
-                    '__BOSSCOMPANY__.comInfo.legalPerson',
-                    '__BOSSCOMPANY__.brandComInfo.legalPerson',
-                    '__BOSSCOMPANY__.[1].data.[0].brandInfo.legalPerson',
-                    '__BOSSCOMPANY__.[1].data.[0].brandComInfo.legalPerson',
-                    '__BOSSCOMPANY__.[1].data.[0].comInfo.legalPerson',
-                    '__INITIAL_STATE__.data.brandInfo.legalPerson'
-                ];
-                for (var i = 0; i < paths.length; i++) {
-                    var segs = paths[i].split('.');
-                    var root = segs[0];
-                    var rest = segs.slice(1).join('.');
-                    var v = tryRead(window[root], rest);
-                    if (v) return v;
-                }
-                return '';
-            }
-            """
-            result = self.page.evaluate(js) or ""
-        except Exception:
-            return ""
-
-        result = str(result).strip()
-        if result and len(result) <= 8 and not any(c in result for c in ("(", "（", " ", "\n")):
-            return result
-        return ""
-
-    def parse_company_similar_jobs_page(self) -> dict:
-        """解析 /gongsi/job/<id>.html 页面。
-        返回 {open_count:int, jobs:[{title,salary,url,hr_block,hr_name,hr_title,company}], page_url:str, company:str}。
-
-        核心策略：用 page.inner_text('body') 拿纯文本 → 按行分块解析。
-        BOSS 公司页格式（每个岗位块）：
-            标题
-            薪资（5-8K）
-            经验（1-3年）
-            学历（大专）
-            HR名·头衔
-            城市·区·地标
-        用"薪资行"作为锚点，往上取标题，往下取 HR。
-        """
-        result = {"open_count": 0, "jobs": [], "page_url": self.page.url, "company": ""}
-
-        try:
-            body_text = self.page.inner_text("body")
-        except Exception as e:
-            print(f"  [公司页] inner_text 失败: {e}")
-            return result
-
-        lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-
-        # 1) open_count：从文本里匹配 "11在招职位" / "在招 11 个" / "招聘职位(11)"
-        for ln in lines[:30]:
-            m = re.search(r"(\d+)\s*在招\s*职位", ln)
-            if not m:
-                m = re.search(r"在招\s*(\d+)\s*个", ln)
-            if not m:
-                m = re.search(r"招聘职位\s*\(\s*(\d+)\s*\)", ln)
-            if not m:
-                m = re.search(r"(\d+)\s*个在招", ln)
-            if m:
-                result["open_count"] = int(m.group(1))
-                break
-
-        # 2) 公司名：从页面 title 或文本中拿
-        try:
-            page_title = self.page.title() or ""
-            # 格式："「淄博齐行家体育文...招聘」2026年..."  或 "XX公司招聘..."
-            company_name = re.sub(r"[「【]", "", page_title)
-            company_name = re.sub(r"招聘.*$", "", company_name)
-            company_name = re.sub(r"[」】]", "", company_name).strip()
-            if company_name:
-                result["company"] = company_name
-        except Exception:
-            pass
-
-        # 3) 解析岗位块。BOSS 公司页岗位块结构：
-        #    标题 / 经验(3-5年|经验不限) / 学历(本科|大专|硕士|学历不限) / HR名·头衔 / 城市·区·地标
-        #    注意：公司页岗位卡不一定显示薪资，所以用 HR 行作为锚点（最稳定），往上找标题。
-        salary_re = re.compile(r"^\d+[-~]\d+K|\d+-\d+元|^\d+元/[时月]", re.I)
-        exp_re = re.compile(r"^(?:\d+[-~]\d+年|\d+年以[上下]|经验不限|应届生?|在校生?|\d+年内)$")
-        edu_re = re.compile(r"^(?:初中及?以下|高中|中专|大专|本科|硕士|博士|学历不限|MBA|EMBA)$")
-        hr_re = re.compile(
-            r"^([\u4e00-\u9fa5]{2,4})\s*[·•・]\s*"
-            r"(HRBP|HR|猎头|顾问|招聘[\u4e00-\u9fa5]{0,3}|HR[\u4e00-\u9fa5]{0,3}|"
-            r"[\u4e00-\u9fa5]{0,4}(?:经理|主管|总监|负责人|助理|专员|人事))$"
-        )
-
-        # 先提取所有 job_detail 链接
-        try:
-            links = (
-                self.page.evaluate(r"""() => {
-                const r = []; const s = new Set();
-                document.querySelectorAll('a[href*="/job_detail/"]').forEach(a => {
-                    const h = a.href, t = (a.innerText || '').trim();
-                    if (h && t && !s.has(h) && t.length < 80) { s.add(h); r.push({href:h, title:t.substring(0,60)}); }
-                });
-                return r;
-            }""")
-                or []
-            )
-        except Exception:
-            links = []
-        link_map = {}
-        for lk in links:
-            key = (lk.get("title") or "")[:12]
-            if key:
-                link_map[key] = lk.get("href", "")
-
-        # 以 HR 行为锚点定位岗位块
-        jobs = []
-        seen_titles = set()
-        hr_indices = [i for i, ln in enumerate(lines) if hr_re.match(ln)]
-        for hi in hr_indices:
-            m = hr_re.match(lines[hi])
-            if not m:
-                continue
-            hr_name = m.group(1)
-            hr_title = m.group(2)
-            hr_block = lines[hi]
-
-            # 往上跳过 学历 / 经验 / 薪资 行，剩下的第一行即标题
-            ti = hi - 1
-            salary = ""
-            while ti >= 0 and (edu_re.match(lines[ti]) or exp_re.match(lines[ti]) or salary_re.match(lines[ti])):
-                if salary_re.match(lines[ti]) and not salary:
-                    salary = lines[ti]
-                ti -= 1
-            if ti < 0:
-                continue
-            title = lines[ti]
-            if not (2 < len(title) < 80):
-                continue
-            if title in seen_titles:
-                continue
-            # 过滤明显非岗位标题的导航/区块行
-            if any(bad in title for bad in ("招聘职位", "公司简介", "职位类型", "工作城市", "全部(")):
-                continue
-            seen_titles.add(title)
-
-            url = link_map.get(title[:12], "")
-            jobs.append(
-                {
-                    "title": title,
-                    "salary": salary,
-                    "url": url,
-                    "hr_block": hr_block,
-                    "hr_name": hr_name,
-                    "hr_title": hr_title,
-                    "company": result.get("company") or "",
-                }
-            )
-
-        result["jobs"] = jobs
-        return result
-
-    def aggregate_company_hrs(self, jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """从 parse_company_similar_jobs_page 返回的 jobs 列表里聚合去重 HR。
-        每条 hr: {name, title, priority, associated_jobs:[...]}。
-        同一 HR 出现在多个岗位时，职务取最高（按 _hr_title_score）。"""
-        hrs_map: Dict[str, Dict[str, Any]] = {}
-        hr_name_re = re.compile(
-            r"([\u4e00-\u9fa5]{2,4})\s*[·｜\|\s]\s*"
-            r"((?:HRBP|HR|猎头|顾问)|招聘[\u4e00-\u9fa5]{0,3}|"
-            r"HR[\u4e00-\u9fa5]{0,3}|"
-            r"[\u4e00-\u9fa5]{0,4}(?:经理|主管|总监|负责人|助理|专员|人事))"
-        )
-        for j in jobs or []:
-            block = (j.get("hr_block") or "").strip()
-            if not block:
-                continue
-            for m in hr_name_re.finditer(block):
-                name = m.group(1).strip()
-                title = m.group(2).strip()
-                if name not in hrs_map:
-                    hrs_map[name] = {
-                        "name": name,
-                        "title": title,
-                        "priority": _hr_title_score(title),
-                        "associated_jobs": [],
-                    }
-                else:
-                    cur_score = hrs_map[name]["priority"]
-                    new_score = _hr_title_score(title)
-                    if new_score > cur_score:
-                        hrs_map[name]["title"] = title
-                        hrs_map[name]["priority"] = new_score
-                if j.get("title") and j["title"] not in hrs_map[name]["associated_jobs"]:
-                    hrs_map[name]["associated_jobs"].append(j["title"])
-        hrs = list(hrs_map.values())
-        hrs.sort(key=lambda h: (-h["priority"], h["name"]))
-        for h in hrs:
-            h["is_top"] = bool(hrs) and h["name"] == hrs[0]["name"]
-        return hrs
-
     def scan_and_apply_current_page(self, greeting_template: Optional[str] = None) -> dict:
         """扫描当前页面全部岗位 → 一键批量投递。"""
         jobs = self.scan_current_page()
@@ -1852,144 +1566,6 @@ class BossAutomation(BossScraper):
     #  监控周期（供后台循环调用）
     # ══════════════════════════════════════
 
-    def _click_chat_tab(self, label: str) -> bool:
-        """切换聊天页顶部 Tab（全部/未读/新招呼/仅沟通）。"""
-        for sel in (f'span.label-name:has-text("{label}")', f'.label-name:has-text("{label}")'):
-            try:
-                tab = self.page.locator(sel).first
-                if tab.count() > 0 and tab.is_visible():
-                    tab.click()
-                    pause(0.5, 1)
-                    return True
-            except Exception:
-                continue
-        return False
-
-    def sync_conversation_list_full(self) -> int:
-        """在「全部」Tab 下抽取每个会话卡片的 hr_name / company / job_title / last_msg
-        并写回数据库。返回更新的会话数。失败返回 0，不抛异常。
-        """
-        try:
-            self._click_chat_tab("全部")
-        except Exception:
-            pass
-        try:
-            cards = self.page.evaluate(
-                """() => {
-                const out = [];
-                const seen = new Set();
-                const items = document.querySelectorAll('li[role="listitem"], .user-list li');
-                const visible = el => {
-                    const r = el.getBoundingClientRect();
-                    const s = getComputedStyle(el);
-                    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-                };
-                const ROLE_RE = /(招聘者|招聘专员|招聘主管|招聘总监|HR(经理|主管|总监|专员)?|人力(资源)?(专员|经理|主管|总监|顾问)?|人力|人事(经理|主管|总监|专员)?|人事|猎头(顾问|经理)?|猎头|顾问|总监|经理|老板|创始人|合伙人|首席执行官|CEO|CTO|COO|CFO|VP|主管|专员|区域)$/;
-                let pos = 0;
-                for (const el of items) {
-                    if (!visible(el)) continue;
-                    const fullText = (el.innerText || '').trim();
-                    if (!fullText || fullText.length < 2) continue;
-                    const key = fullText.replace(/\\s+/g, ' ').slice(0, 80);
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    let hr = '';
-                    try {
-                        const nm = el.querySelector('.name-text, .geek-name, [class*="name-text"]');
-                        if (nm) hr = (nm.innerText || '').trim();
-                    } catch(e) {}
-                    let wrap = '';
-                    try {
-                        const w = el.querySelector('[class*="name"]:not(.name-text):not(.geek-name)');
-                        if (w) wrap = (w.innerText || '').trim();
-                    } catch(e) {}
-                    if (!hr && wrap) hr = (wrap.split('\\n')[0] || '').trim();
-                    let after = wrap;
-                    if (hr && wrap.startsWith(hr)) after = wrap.slice(hr.length).trim();
-                    let role = '';
-                    let company = after;
-                    const m = ROLE_RE.exec(after);
-                    if (m) {
-                        role = m[0];
-                        company = after.slice(0, m.index).trim();
-                    }
-                    let lastMsg = '';
-                    try {
-                        const lm = el.querySelector('[class*="last"], [class*="msg-text"], [class*="message-text"]');
-                        if (lm) lastMsg = (lm.innerText || '').trim();
-                    } catch(e) {}
-                    lastMsg = lastMsg.replace(/^\\[(送达|已读|未读|发送失败|已发送)\\]\\s*/g, '').trim();
-                    const unreadEl = el.querySelector('.red-dot, [class*="unread"], [class*="badge"]');
-                    const unread = !!(unreadEl && visible(unreadEl));
-                    out.push({
-                        hr_name: hr,
-                        company: company,
-                        role: role,
-                        job_title: '',
-                        last_msg: lastMsg,
-                        unread: unread,
-                        raw: fullText.slice(0, 200),
-                        position: pos++,
-                    });
-                }
-                return out;
-            }"""
-            )
-        except Exception as e:
-            print(f"  [sync-list] DOM 抽取失败: {e}")
-            return 0
-
-        if not cards:
-            return 0
-
-        try:
-            from boss_state import get_db, list_active_conversations
-        except Exception:
-            return 0
-
-        known = {c["hr_name"]: c for c in list_active_conversations() if c.get("hr_name")}
-        updated = 0
-        db = get_db()
-        for c in cards:
-            hr = (c.get("hr_name") or "").strip()
-            if not hr or len(hr) < 2:
-                continue
-            company = (c.get("company") or "").strip()
-            job = (c.get("job_title") or "").strip()
-            last_msg = (c.get("last_msg") or "").strip()
-            kc = known.get(hr)
-            if not kc:
-                continue
-            sets = []
-            args: list = []
-            old_company = (kc.get("hr_company") or "").strip()
-            if company and company != old_company and len(company) >= 2:
-                sets.append("hr_company=?")
-                args.append(company[:80])
-            if job and not kc.get("job_title"):
-                sets.append("job_title=?")
-                args.append(job[:80])
-            old_last = (kc.get("last_message_text") or "").strip()
-            if last_msg and last_msg != old_last:
-                sets.append("last_message_text=?")
-                args.append(last_msg[:200])
-            if not sets:
-                continue
-            sets.append("updated_at=CURRENT_TIMESTAMP")
-            args.append(kc["id"])
-            try:
-                db.execute(f"UPDATE conversations SET {', '.join(sets)} WHERE id=?", tuple(args))
-                updated += 1
-            except Exception:
-                pass
-        try:
-            db.commit()
-        except Exception:
-            pass
-        if updated:
-            print(f"  [sync-list] 回填 {updated} 个会话字段")
-        return updated
-
     def run_chat_monitor_cycle(self) -> dict:
         """
         一个完整的监控周期:
@@ -2006,16 +1582,17 @@ class BossAutomation(BossScraper):
             if not self.navigate_to_chat():
                 print("  [监控] 导航到聊天页失败")
                 return result
-
-        # 先在「全部」Tab 下抓一次完整列表，回填 company/job_title/last_msg（修 P10 漏字段）
-        try:
-            self.sync_conversation_list_full()
-        except Exception as e:
-            print(f"  [监控] sync_conversation_list_full 异常: {e}")
-
-        # 切到「未读」Tab 处理待回复会话
-        if not need_nav:
-            self._click_chat_tab("未读")
+        else:
+            # 已在聊天页，轻量点击「未读」Tab 即可
+            for sel in ['span.label-name:has-text("未读")', '.label-name:has-text("未读")']:
+                try:
+                    tab = self.page.locator(sel).first
+                    if tab.is_visible():
+                        tab.click()
+                        pause(0.5, 1)
+                        break
+                except Exception:
+                    pass
 
         if not self.check_page_safety():
             print("  [监控] 安全检查未通过（登录过期/验证码等）")
@@ -2113,7 +1690,7 @@ class BossAutomation(BossScraper):
                     continue
 
                 conv_id = get_or_create_conversation(
-                    None, hr_name, conv_data.get("company", ""), conv_data.get("job_title", "")
+                    None, hr_name, conv_data.get("company", ""), conv_data.get("job_title", ""), conv_data.get("hr_title", "")
                 )
                 known_convs = list_active_conversations()
                 matched_conv = get_conversation(conv_id)
@@ -2139,29 +1716,9 @@ class BossAutomation(BossScraper):
                         except Exception:
                             pass
 
-            # 从会话文本里提取公司名（格式：HR名+公司名+岗位）
-            if not matched_conv.get("hr_company"):
-                company_info = text.split("\n")[0] if "\n" in text else text
-                import re as _re3
-
-                hr_name_part = matched_conv.get("hr_name", "")
-                if hr_name_part and len(hr_name_part) >= 2:
-                    company_info = company_info.replace(hr_name_part, "", 1)
-                # 去掉时间/状态/括号等
-                company_info = _re3.sub(r"\d{1,2}:\d{2}|\[.*?\]|送达|已读|未读", "", company_info)
-                # 提取公司名（纯中文 4-12字）
-                m = _re3.search(r"[\u4e00-\u9fa5]{4,12}", company_info)
-                if m:
-                    company = m.group()
-                    try:
-                        from boss_state import get_db as _gdb3
-
-                        _gdb3().execute("UPDATE conversations SET hr_company=? WHERE id=?", (company, conv_id))
-                        _gdb3().commit()
-                        matched_conv["hr_company"] = company
-                        print(f"  [监控] 提取公司名: {company}")
-                    except Exception:
-                        pass
+            # 注意：公司名/职位/岗位名的精确提取已移至 read_chat_header_info()，
+            # 在打开会话后自动执行并写回 DB。这里不再做模糊兜底提取，
+            # 避免正则误匹配把"更多"等噪音写入 hr_company。
 
             if matched_conv.get("status") != "active":
                 continue
@@ -2180,7 +1737,14 @@ class BossAutomation(BossScraper):
                 continue
             pause(1, 2)
             msgs = self.read_visible_messages()
-            print(f"  [监控] 会话 {matched_conv.get('hr_name')}: 读到 {len(msgs)} 条消息")
+            online_status = self.read_chat_online_status()
+            header_info = self.read_chat_header_info()
+            _jt = (header_info.get('jobTitle') or '').strip()
+            _sal = (header_info.get('salary') or '').strip()
+            _city = (header_info.get('city') or '').strip()
+            _parts = [p for p in [_jt, _sal, _city] if p]
+            _job_str = ' · '.join(_parts) if _parts else '-'
+            print(f"  [监控] {matched_conv.get('hr_name')}: {len(msgs)}条消息, 在线={online_status}, 岗位={_job_str}")
 
             new_count = 0
             clean_msgs = []
@@ -2193,8 +1757,56 @@ class BossAutomation(BossScraper):
 
             if clean_msgs:
                 replace_conversation_messages(conv_id, clean_msgs)
+
+            # 无论是否有消息，都更新在线状态和岗位信息（从精确 class 提取）
+            # 注意：必须在 if clean_msgs 之外，否则没消息时不更新
+            try:
+                from boss_state import get_db
+                db = get_db()
+                updates = []
+                params = []
+                if online_status:
+                    updates.append("online_status=?")
+                    params.append(online_status)
+                else:
+                    # 对方离线时清空在线状态，否则旧的"在线"会一直保留
+                    updates.append("online_status=?")
+                    params.append("")
+                # 岗位名/薪资/城市：有值就覆盖，无值不更新（保留旧值）
+                _jt = (header_info.get('jobTitle') or '').strip()
+                if _jt:
+                    updates.append("job_title=?")
+                    params.append(_jt)
+                _sal = (header_info.get('salary') or '').strip()
+                if _sal:
+                    updates.append("salary=?")
+                    params.append(_sal)
+                _city = (header_info.get('city') or '').strip()
+                if _city:
+                    updates.append("city=?")
+                    params.append(_city)
+                if updates:
+                    params.append(conv_id)
+                    db.execute(f"UPDATE conversations SET {', '.join(updates)} WHERE id=?", params)
+                    db.commit()
+            except Exception:
+                pass
                 last_msg = clean_msgs[-1]
-                update_conversation_last_message(conv_id, last_msg["content"], last_msg["sender"], 0)
+                # 过滤BOSS系统通知：这类消息不算真正的HR回复，不应更新 last_message_from
+                _system_prefixes = (
+                    "你与该职位竞争者PK情况",
+                    "竞争力分析",
+                    "BOSS安全提示",
+                    "系统消息",
+                    "沟通分析",
+                    "今日推荐",
+                    "该Boss已查看了你的简历",
+                )
+                last_content = (last_msg.get("content") or "").strip()
+                is_system_msg = last_msg.get("sender") == "hr" and len(last_content) <= 80 and any(
+                    last_content.startswith(p) for p in _system_prefixes
+                )
+                # 先不更新 last_message，等未回复检测完成后一起更新
 
                 # 从 HR 消息里提取微信号
                 if not matched_conv.get("hr_wechat"):
@@ -2257,15 +1869,25 @@ class BossAutomation(BossScraper):
             if unreplied_hr_msg:
                 result["new_messages"] += 1
 
+            # 更新会话最后消息 + 未读计数（合并到一处）
+            if clean_msgs:
+                last_msg = clean_msgs[-1]
+                _system_prefixes2 = (
+                    "你与该职位竞争者PK情况", "竞争力分析", "BOSS安全提示",
+                    "系统消息", "沟通分析", "今日推荐", "该Boss已查看了你的简历",
+                )
+                last_content2 = (last_msg.get("content") or "").strip()
+                is_system_msg2 = last_msg.get("sender") == "hr" and len(last_content2) <= 80 and any(
+                    last_content2.startswith(p) for p in _system_prefixes2
+                )
+                if not is_system_msg2:
+                    update_conversation_last_message(conv_id, last_msg["content"], last_msg["sender"], new_count)
+
             # 自动回复
             auto_reply_enabled = get_setting("auto_reply_enabled", "false") == "true"
             if unreplied_hr_msg and auto_reply_enabled:
                 today_replies = get_today_auto_reply_count()
                 if today_replies >= MAX_AUTO_REPLY_PER_DAY:
-                    continue
-
-                # 风控冷却期：本轮不发消息
-                if not self._respect_cooldown():
                     continue
 
                 try:
@@ -2338,12 +1960,10 @@ class BossAutomation(BossScraper):
 
                         # 然后再发送AI回复
                         print(f"  [监控] AI回复: {reply[:60]}...")
-                        # 模拟真人"看到消息→思考→打字"的延迟，按回复长度浮动
-                        think = random.uniform(2, 5) + min(len(reply) * 0.05, 6)
-                        time.sleep(think)
                         if self.send_message(reply):
                             add_message(conv_id, "me", reply, ai_generated=True)
-                            update_conversation_last_message(conv_id, reply, "me", 0)
+                            # 回复成功后清零未读计数
+                            update_conversation_last_message(conv_id, reply, "me", -999)
                             increment_daily_stat("auto_replies_sent")
                             result["replies_sent"] += 1
                             if interest:
@@ -2370,13 +1990,17 @@ class BossAutomation(BossScraper):
                     pause(0.3, 0.5)
             except Exception:
                 pass
+            # 重新切「未读」Tab，刷新侧边栏列表（BOSS 可能已把刚才的会话标记为已读移出列表）
+            for sel in ['span.label-name:has-text("未读")', '.label-name:has-text("未读")']:
+                try:
+                    tab = self.page.locator(sel).first
+                    if tab.is_visible():
+                        tab.click()
+                        pause(0.5, 1)
+                        break
+                except Exception:
+                    pass
             pause(0.5, 1)
-
-        # 监控循环结束后切回「全部」Tab，避免 BOSS 页面长期停留在未读视图（P09）
-        try:
-            self._click_chat_tab("全部")
-        except Exception:
-            pass
 
         print(f"  [监控] 本轮完成: 消息 {result['new_messages']}, 回复 {result['replies_sent']}")
         return result
