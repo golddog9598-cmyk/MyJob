@@ -1,5 +1,37 @@
 # 更新日志
 
+## v4.1 — 合并 PR #3 + AI 智能体后端补完 (2026-06-22)
+
+合并上游 PR #3 (v4.0 from xun-x33) 后，补回 main 端历史 commit 527a6bc 引入的 3 个 AI 端点。
+
+### ✨ 新增端点
+
+- `POST /api/jobs/optimize-resume` — AI 简历优化（24h DB 缓存，支持 `force_refresh` 强制重新生成）
+- `POST /api/jobs/chat-suggestion` — AI 沟通建议（24h DB 缓存，根据 HR 姓名/头衔/法人状态生成话术）
+- `POST /api/jobs/analyze` — 输出补 `decision` / `reasons` / `risks` / `suggested_questions` 4 个字段
+
+### 🗄️ 数据库迁移
+
+`applications` 表新增 4 列（启动时自动 ALTER）：
+- `optimize_result TEXT` / `optimize_at TIMESTAMP`
+- `chat_suggestion_result TEXT` / `chat_suggestion_at TIMESTAMP`
+
+### 📁 保留的 main 端独有文件
+
+- `boss_company.py` — 公司画像聚合（被 `tests/test_smart_send.py` 引用）
+- `boss_geo.py` — BOSS 城市/区/规模映射（待前端接入）
+- `interview/config.py` — interview 子模块配置
+- `start.bat` — Windows 一键启动
+
+### ⚠ 已知未补回（PR 端用新方式实现或丢失）
+
+- 简历优化 + 沟通建议的**前端弹窗 UI**：dashboard.html 被 PR 端整体重写，旧 UI 入口需重做
+- HR 真实姓名/法人识别/法人直聘 tag：PR 端搜索流程已实现部分能力（前端字段名不同，未对齐）
+- `send_resume` 按钮 `innerText` 兜底：PR 端使用不同的 selector 策略
+- CLI 端的 `analyze` / 候选池增强：未对齐到 lakejob CLI
+
+---
+
 ## v4.0 — 聊天页深度优化 + 搜索体验升级 (2026-06-16)
 
 **128 commits · 2026-05-15 ~ 2026-06-16**

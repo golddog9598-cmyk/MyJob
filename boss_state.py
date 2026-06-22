@@ -157,6 +157,23 @@ def init_db():
         db.execute("ALTER TABLE applications ADD COLUMN hr_active_days INTEGER DEFAULT -1")
     except sqlite3.OperationalError:
         pass
+    # AI 24h 缓存列 (PR #3 合并后补回)
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN optimize_result TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN optimize_at TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN chat_suggestion_result TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN chat_suggestion_at TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
     # 候选池表
     db.executescript("""
         CREATE TABLE IF NOT EXISTS shortlists (
@@ -229,8 +246,14 @@ def _rows_to_list(rows) -> List[dict]:
 # ══════════════════════════════════════
 
 _COMPANY_SUFFIXES = (
-    "有限公司", "有限责任公司", "股份有限公司", "集团", "集团有限",
-    "(中国)", "（中国）", "股份",
+    "有限公司",
+    "有限责任公司",
+    "股份有限公司",
+    "集团",
+    "集团有限",
+    "(中国)",
+    "（中国）",
+    "股份",
 )
 
 
@@ -283,8 +306,7 @@ def has_company_been_applied(company: str, company_id: str = "") -> dict:
     # 2. 精确
     if company:
         row = db.execute(
-            f"SELECT COUNT(*) as cnt FROM applications "
-            f"WHERE company=? AND status IN ({placeholders})",
+            f"SELECT COUNT(*) as cnt FROM applications WHERE company=? AND status IN ({placeholders})",
             (company, *applied_status),
         ).fetchone()
         if row and row["cnt"] > 0:
@@ -293,9 +315,7 @@ def has_company_been_applied(company: str, company_id: str = "") -> dict:
     # 3. 模糊 (按归一化名匹配, 排除前缀冲突: 字节跳动 不匹配 字节外包)
     if name_norm and len(name_norm) >= 2:
         rows = db.execute(
-            f"SELECT company, COUNT(*) as cnt FROM applications "
-            f"WHERE status IN ({placeholders}) "
-            f"GROUP BY company",
+            f"SELECT company, COUNT(*) as cnt FROM applications WHERE status IN ({placeholders}) GROUP BY company",
             (*applied_status,),
         ).fetchall()
         for r in rows:
@@ -376,9 +396,15 @@ def get_cached_company(name: str, company_id: str = "", max_age_hours: int = COM
 
 
 def save_company_cache(
-    name: str, company_id: str = "", industry: str = "", scale: str = "",
-    stage: str = "", employee_count: str = "", founded: str = "",
-    open_positions: Optional[List[str]] = None, description: str = "",
+    name: str,
+    company_id: str = "",
+    industry: str = "",
+    scale: str = "",
+    stage: str = "",
+    employee_count: str = "",
+    founded: str = "",
+    open_positions: Optional[List[str]] = None,
+    description: str = "",
     source_url: str = "",
 ) -> int:
     """写入/刷新公司信息缓存. ON CONFLICT 走 UPSERT 路径, 自动刷新 fetched_at."""
@@ -399,8 +425,18 @@ def save_company_cache(
              description=excluded.description,
              source_url=excluded.source_url,
              fetched_at=CURRENT_TIMESTAMP""",
-        (name, company_id or "", industry, scale, stage, employee_count, founded,
-         positions_json, description, source_url),
+        (
+            name,
+            company_id or "",
+            industry,
+            scale,
+            stage,
+            employee_count,
+            founded,
+            positions_json,
+            description,
+            source_url,
+        ),
     )
     db.commit()
     return cur.lastrowid
@@ -422,8 +458,16 @@ def list_companies_for_cleanup(older_than_hours: int = 168) -> int:
 # ══════════════════════════════════════
 
 _NOISE_POSITIONS = {
-    "更多", "查看更多", "全部", "收起", "展开", "加载更多",
-    "职位搜索", "搜索", "热门", "推荐",
+    "更多",
+    "查看更多",
+    "全部",
+    "收起",
+    "展开",
+    "加载更多",
+    "职位搜索",
+    "搜索",
+    "热门",
+    "推荐",
 }
 
 _SALARY_PAT = re.compile(r"(\d+\s*[-~到至]?\s*\d*\s*[Kk万])|(\d+\s*元/?月)")
@@ -656,7 +700,9 @@ def get_pending_applications(limit: int = 50) -> List[dict]:
 # ══════════════════════════════════════
 
 
-def get_or_create_conversation(application_id: int, hr_name: str, hr_company: str, job_title: str, hr_title: str = '') -> int:
+def get_or_create_conversation(
+    application_id: int, hr_name: str, hr_company: str, job_title: str, hr_title: str = ""
+) -> int:
     db = get_db()
     if application_id:
         row = db.execute("SELECT id FROM conversations WHERE application_id=?", (application_id,)).fetchone()
@@ -708,7 +754,7 @@ def find_conversation_by_hr_name(hr_name: str) -> Optional[dict]:
 
 def update_conversation_last_message(conv_id: int, text: str, sender: str, unread_delta: int = 0):
     """更新会话的最后一条消息摘要。
-    
+
     只在消息内容或发送者真的变化时才更新 last_message_at，
     避免监控循环打开旧会话时无意义地刷新时间戳导致"收到回复"虚增。
     """

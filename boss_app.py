@@ -1038,6 +1038,24 @@ class AnalyzeRequest(BaseModel):
     with_company_info: Optional[bool] = False
 
 
+class OptimizeResumeRequest(BaseModel):
+    job_url: str
+    job_title: Optional[str] = ""
+    company: Optional[str] = ""
+    description: Optional[str] = ""
+    force_refresh: Optional[bool] = False
+
+
+class ChatSuggestionRequest(BaseModel):
+    job_url: str
+    job_title: Optional[str] = ""
+    company: Optional[str] = ""
+    description: Optional[str] = ""
+    hr_name: Optional[str] = ""
+    hr_title: Optional[str] = ""
+    is_boss: Optional[bool] = False
+
+
 class SendMessageRequest(BaseModel):
     content: str
 
@@ -1736,10 +1754,14 @@ async def analyze_jd(req: AnalyzeRequest):
 ## 输出格式（严格JSON）
 {{
   "match_score": 85,
+  "decision": "建议投递",
   "key_skills": ["Python", "LangChain", "RAG"],
   "gap": "缺少K8s部署经验",
   "advice": "建议强调Agent开发经验，问对方技术栈",
-  "summary": "整体匹配度较高，注意补充部署相关经验"
+  "summary": "整体匹配度较高，注意补充部署相关经验",
+  "reasons": ["匹配理由1", "匹配理由2"],
+  "risks": ["风险点1"],
+  "suggested_questions": ["建议追问1"]
 }}"""
     else:
         prompt = f"""你是求职辅导专家。分析以下岗位JD，提取关键信息，输出JSON。
@@ -1752,10 +1774,14 @@ async def analyze_jd(req: AnalyzeRequest):
 ## 输出格式（严格JSON）
 {{
   "match_score": 70,
+  "decision": "可以尝试",
   "key_skills": ["Python", "LangChain", "RAG"],
   "gap": "",
   "advice": "",
-  "summary": "该岗位的核心要求是..."
+  "summary": "该岗位的核心要求是...",
+  "reasons": ["理由1"],
+  "risks": ["风险1"],
+  "suggested_questions": ["追问1"]
 }}
 
 注意：match_score 基于 JD 难度和市场需求预估即可，不必对比简历。summary 用一两句总结这个岗位的核心要求。"""
@@ -1774,6 +1800,204 @@ async def analyze_jd(req: AnalyzeRequest):
         return json.loads(raw.strip().strip("`").strip("json").strip())
     except Exception as e:
         return {"error": f"AI分析失败: {e}", "match_score": 0, "summary": "请检查AI配置"}
+
+
+@app.post("/api/jobs/optimize-resume")
+async def optimize_resume(req: OptimizeResumeRequest):
+    """根据岗位JD生成简历优化建议（24h DB 缓存）。"""
+    import datetime
+    from boss_state import get_db
+
+    resume = get_setting("resume_summary", "")
+    desc = req.description or ""
+    title = req.job_title or ""
+    company = req.company or ""
+
+    if not desc and req.job_url:
+        existing = get_application_by_url(req.job_url)
+        if existing:
+            desc = existing.get("description") or ""
+            title = title or existing.get("job_title", "")
+            company = company or existing.get("company", "")
+
+    db = get_db()
+    row = db.execute(
+        "SELECT optimize_result, optimize_at FROM applications WHERE job_url=?",
+        (req.job_url,),
+    ).fetchone()
+    if row and row["optimize_result"] and not req.force_refresh and row["optimize_at"]:
+        try:
+            t = datetime.datetime.fromisoformat(row["optimize_at"])
+            if (datetime.datetime.now() - t).total_seconds() < 86400:
+                cached = json.loads(row["optimize_result"])
+                cached["_cached"] = True
+                cached["_cached_at"] = row["optimize_at"]
+                return cached
+        except Exception:
+            pass
+
+    resume_block = (
+        "## 求职者当前简历\n" + resume[:2000]
+        if resume and len(resume.strip()) > 5
+        else "（求职者未提供简历，请基于JD给出通用优化建议）"
+    )
+
+    prompt = f"""你是站在求职者一侧的简历审计官和优化专家。根据以下岗位JD，生成简历优化建议。
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:3000]}
+
+{resume_block}
+
+## 输出格式（严格JSON）
+{{{{
+  "one_line": "一句话结论：这份简历最需要改什么",
+  "key_requirements": ["JD最核心的3-5个要求"],
+  "match_gaps": ["简历中缺少但JD强调的方向"],
+  "optimize_tips": [
+    {{{{"area": "需要优化的模块", "current": "当前写了什么", "suggestion": "建议改为什么", "why": "为什么这样改"}}}}
+  ],
+  "keywords_to_add": ["需要加入的关键词"],
+  "action_items": ["立刻修改的最高优先级事项"],
+  "rewrite_example": "一段改写后的项目经历示例"
+}}}}
+
+## 改写原则
+1. 不编造数据、项目、经历
+2. 把"负责了什么"改成"做成了什么"
+3. 每条经历体现：动作 + 产物 + 结果
+4. 关键词匹配JD优先于通用优化
+5. 用简体中文"""
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职简历优化专家，输出严格JSON，用简体中文。",
+            temperature=0.4,
+        )
+        result = json.loads(raw.strip().strip("`").strip("json").strip())
+        try:
+            db.execute(
+                "UPDATE applications SET optimize_result=?, optimize_at=CURRENT_TIMESTAMP WHERE job_url=?",
+                (json.dumps(result, ensure_ascii=False), req.job_url),
+            )
+            db.commit()
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        return {"error": f"AI优化失败: {e}", "one_line": "请检查AI配置", "optimize_tips": [], "action_items": []}
+
+
+@app.post("/api/jobs/chat-suggestion")
+async def chat_suggestion(req: ChatSuggestionRequest):
+    """根据岗位JD + HR信息生成沟通建议（24h DB 缓存）。"""
+    import datetime
+    from boss_state import get_db
+
+    desc = req.description or ""
+    title = req.job_title or ""
+    company = req.company or ""
+    hr_name = req.hr_name or ""
+    hr_title = req.hr_title or ""
+    is_boss = req.is_boss or False
+
+    if not desc and req.job_url:
+        existing = get_application_by_url(req.job_url)
+        if existing:
+            desc = existing.get("description") or desc
+            title = title or existing.get("job_title", "")
+            company = company or existing.get("company", "")
+            hr_name = hr_name or existing.get("hr_name", "")
+            hr_title = hr_title or existing.get("hr_title", "")
+
+    db = get_db()
+    row = db.execute(
+        "SELECT chat_suggestion_result, chat_suggestion_at FROM applications WHERE job_url=?",
+        (req.job_url,),
+    ).fetchone()
+    if row and row["chat_suggestion_result"] and row["chat_suggestion_at"]:
+        try:
+            t = datetime.datetime.fromisoformat(row["chat_suggestion_at"])
+            if (datetime.datetime.now() - t).total_seconds() < 86400:
+                cached = json.loads(row["chat_suggestion_result"])
+                cached["_cached"] = True
+                cached["_cached_at"] = row["chat_suggestion_at"]
+                return cached
+        except Exception:
+            pass
+
+    resume = get_setting("resume_summary", "")
+    boss_hint = "对方很可能是公司老板/法人本人，语气要更诚意、更直接" if is_boss else ""
+    hr_ctx = f"HR姓名: {hr_name}" + (f"，头衔: {hr_title}" if hr_title else "")
+    if is_boss and hr_name:
+        hr_ctx += f"（⚠ {hr_name}是公司法人/老板）"
+
+    resume_block = (
+        "## 求职者简历摘要\n" + resume[:1500]
+        if resume and len(resume.strip()) > 5
+        else ""
+    )
+    boss_line = ("- " + boss_hint) if boss_hint else ""
+
+    prompt = f"""你是求职沟通教练，帮求职者生成和 HR 的沟通策略。
+
+## 岗位信息
+- 公司: {company}
+- 职位: {title}
+- JD: {desc[:2000]}
+
+## HR 信息
+- {hr_ctx}
+{boss_line}
+
+{resume_block}
+
+## 输出格式（严格JSON）
+{{{{
+  "icebreaker": "一句自然的第一句话打招呼（10-25字）",
+  "chat_topics": [
+    {{{{"topic": "话题方向", "angle": "怎么说", "example": "具体话术示例"}}}}
+  ],
+  "avoid": ["千万别说的话/踩雷点"],
+  "follow_up": "如果对方不回复，怎么优雅跟进的话术",
+  "close_deal": "如何引导到面试/后续的话术",
+  "tone_tip": "整体沟通风格建议（1-2句）"
+}}}}
+
+## 原则
+1. 打招呼语必须紧扣JD内容
+2. 不要列技能清单
+3. 避免过于卑微或过于自信
+4. 用简体中文"""
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        raw = llm_chat_deepseek(
+            [{"role": "user", "content": prompt}],
+            system_prompt="你是求职沟通教练，输出严格JSON，用简体中文。",
+            temperature=0.6,
+        )
+        result = json.loads(raw.strip().strip("`").strip("json").strip())
+        try:
+            db.execute(
+                "UPDATE applications SET chat_suggestion_result=?, chat_suggestion_at=CURRENT_TIMESTAMP WHERE job_url=?",
+                (json.dumps(result, ensure_ascii=False), req.job_url),
+            )
+            db.commit()
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        return {"error": f"沟通建议生成失败: {e}", "icebreaker": "", "chat_topics": [], "avoid": []}
+
 
 
 # ══════════════════════════════════════

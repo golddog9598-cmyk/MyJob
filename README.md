@@ -480,6 +480,16 @@ lakejob status             # 浏览器运行状态
 
 ---
 
+## 📋 版本与已知限制
+
+当前版本（v4.1）：
+- 后端：完整支持 3 个 AI 端点（`/api/jobs/analyze`、`/api/jobs/optimize-resume`、`/api/jobs/chat-suggestion`），均带 24h DB 缓存
+- 前端 dashboard.html：合并 PR #3 后整体重写，**「简历优化」「沟通建议」弹窗 UI 暂未对接**，需自行调用 API 或后续补回
+- `boss_geo.py`（中文区名→BOSS code 映射）保留但未被搜索流程引用（PR 端用前端直接传 code 的新方式）
+- 详见 [CHANGELOG.md](CHANGELOG.md) 的 v4.1 节
+
+---
+
 ## 📑 许可证
 
 [MIT](LICENSE)
