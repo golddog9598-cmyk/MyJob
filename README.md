@@ -6,7 +6,7 @@
 
 从岗位与城市筛选开始，把简历定制、投递、HR 沟通和面试意向集中到一套可持续推进的工作流中。
 
-[![Version](https://img.shields.io/badge/version-V0.0.4-168da9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V0.0.5-168da9?style=flat-square)](CHANGELOG.md)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vuedotjs&logoColor=white)](resume_ui)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat-square&logo=fastapi&logoColor=white)](boss_app.py)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
@@ -267,24 +267,24 @@ npm run build
 cd ..
 
 python -m pytest tests --ignore=tests/test_smart_send.py -q
-python -m py_compile boss_app.py lakejob_cli/cli.py
+python -m py_compile boss_app.py MyJob_cli/cli.py
 ```
 
 ### CLI
 
-安装后可使用 `lakejob` 命令调用与 Web 工作台相同的后端能力：
+安装后可使用 `myjob` 命令调用与 Web 工作台相同的后端能力：
 
 ```bash
-lakejob version
-lakejob doctor
-lakejob status
-lakejob search "AI Agent" --city 深圳
-lakejob resume templates
-lakejob resume export --format pdf --output ./resume.pdf
-lakejob campaign list
+myjob version
+myjob doctor
+myjob status
+myjob search "AI Agent" --city 深圳
+myjob resume templates
+myjob resume export --format pdf --output ./resume.pdf
+myjob campaign list
 ```
 
-运行 `lakejob --help`、`lakejob resume --help` 或 `lakejob campaign --help` 查看完整命令。
+运行 `myjob --help`、`myjob resume --help` 或 `myjob campaign --help` 查看完整命令。
 
 ## 配置
 
@@ -340,7 +340,7 @@ MyJob/
 ├─ resume_documents.py        简历解析、模板与文件导出
 ├─ resume_tailor.py           JD 定制简历逻辑
 ├─ job_campaign.py            求职计划与调度
-├─ lakejob_cli/               命令行客户端
+├─ MyJob_cli/                 命令行客户端
 ├─ docs/                      架构与产品说明
 └─ tests/                     后端与关键流程回归测试
 ```

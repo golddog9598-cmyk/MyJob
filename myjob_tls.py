@@ -37,8 +37,8 @@ def resolve_tls_paths(
 ) -> tuple[Path, Path]:
     """Resolve explicit paths, environment variables, then local defaults."""
 
-    cert_env = _first_env("MYJOB_TLS_CERT", "MYJOB_SSL_CERTFILE", "LAKEJOB_TLS_CERT")
-    key_env = _first_env("MYJOB_TLS_KEY", "MYJOB_SSL_KEYFILE", "LAKEJOB_TLS_KEY")
+    cert_env = _first_env("MYJOB_TLS_CERT", "MYJOB_SSL_CERTFILE")
+    key_env = _first_env("MYJOB_TLS_KEY", "MYJOB_SSL_KEYFILE")
     cert_value = cert_path or cert_env
     key_value = key_path or key_env
     if bool(cert_value) != bool(key_value):

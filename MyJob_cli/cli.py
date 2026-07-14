@@ -11,7 +11,7 @@ from . import client, output
 
 @click.group()
 def main():
-    """MyJob - 求职自动化平台 V0.0.4
+    """MyJob - 求职自动化平台 V0.0.5
 
     命令返回结构化 JSON 到 stdout，Agent 友好。
     """
@@ -20,7 +20,7 @@ def main():
 # ── 版本 ──
 @main.command("version")
 def version_cmd():
-    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.4"}))
+    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.5"}))
 
 
 # ── Schema：AI Agent 工具描述 ──
@@ -357,7 +357,7 @@ def server_cmd(start, stop, port):
 
     project_dir = os.path.dirname(os.path.dirname(__file__))
     if not os.path.exists(os.path.join(project_dir, "boss_app.py")):
-        project_dir = os.environ.get("MYJOB_PROJECT") or os.environ.get("LAKEJOB_PROJECT") or project_dir
+        project_dir = os.environ.get("MYJOB_PROJECT") or project_dir
 
     if start:
         cmd = ["python", os.path.join(project_dir, "boss_app.py"), "--port", str(port)]
@@ -382,7 +382,7 @@ def restart_cmd(port):
 
     project_dir = os.path.dirname(os.path.dirname(__file__))
     if not os.path.exists(os.path.join(project_dir, "boss_app.py")):
-        project_dir = os.environ.get("MYJOB_PROJECT") or os.environ.get("LAKEJOB_PROJECT") or project_dir
+        project_dir = os.environ.get("MYJOB_PROJECT") or project_dir
 
     boss_py = os.path.join(project_dir, "boss_app.py")
     if not os.path.exists(boss_py):

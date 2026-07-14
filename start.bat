@@ -16,7 +16,7 @@ if not errorlevel 1 (
 cd /d "%PROJECT_DIR%" || (echo [ERROR] 无法进入项目目录 & pause & exit /b 1)
 
 echo ============================================
-echo  MyJob V0.0.4
+echo  MyJob V0.0.5
 echo ============================================
 echo.
 

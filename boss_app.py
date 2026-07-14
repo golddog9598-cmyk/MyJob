@@ -107,12 +107,10 @@ from resume_documents import (
 )
 
 # ── FastAPI 应用 ──
-_docs_enabled = (
-    os.getenv("MYJOB_ENABLE_DOCS") or os.getenv("LAKEJOB_ENABLE_DOCS", "false")
-).lower() == "true"
+_docs_enabled = os.getenv("MYJOB_ENABLE_DOCS", "false").lower() == "true"
 app = FastAPI(
     title="MyJob",
-    version="V0.0.4",
+    version="V0.0.5",
     docs_url="/api/docs" if _docs_enabled else None,
     redoc_url=None,
     openapi_url="/api/openapi.json" if _docs_enabled else None,
@@ -122,9 +120,7 @@ _default_origins = "https://127.0.0.1:5173,https://localhost:5173"
 _allowed_origins = [
     origin.strip()
     for origin in (
-        os.getenv("MYJOB_CORS_ORIGINS")
-        or os.getenv("LAKEJOB_CORS_ORIGINS")
-        or _default_origins
+        os.getenv("MYJOB_CORS_ORIGINS") or _default_origins
     ).split(",")
     if origin.strip()
 ]
@@ -144,11 +140,10 @@ app.mount("/static", StaticFiles(directory=str(static_dir), html=False), name="s
 auth_manager = AuthManager(
     Path(
         os.getenv("MYJOB_AUTH_FILE")
-        or os.getenv("LAKEJOB_AUTH_FILE")
         or str(Path(__file__).parent / ".boss_profile" / "auth.db")
     ),
     session_hours=int(
-        os.getenv("MYJOB_SESSION_HOURS") or os.getenv("LAKEJOB_SESSION_HOURS", "12")
+        os.getenv("MYJOB_SESSION_HOURS", "12")
     ),
     legacy_path=Path(__file__).parent / ".boss_profile" / "auth.json",
 )
@@ -1272,9 +1267,7 @@ class UserStatusRequest(BaseModel):
 
 def _session_response(request: Request, payload: dict, token: str, status_code: int = 200) -> JSONResponse:
     response = JSONResponse(status_code=status_code, content=payload)
-    secure_env = (
-        os.getenv("MYJOB_SECURE_COOKIE") or os.getenv("LAKEJOB_SECURE_COOKIE", "")
-    ).strip().lower()
+    secure_env = os.getenv("MYJOB_SECURE_COOKIE", "").strip().lower()
     secure_cookie = secure_env == "true" if secure_env else request.url.scheme == "https"
     response.set_cookie(
         AUTH_COOKIE_NAME,
@@ -3657,7 +3650,7 @@ def main():
         uvicorn_options.update(ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
         scheme = "https"
 
-    print(f"\n🚀 MyJob V0.0.4: {scheme}://{args.host}:{args.port}")
+    print(f"\n🚀 MyJob V0.0.5: {scheme}://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, **uvicorn_options)
 
 

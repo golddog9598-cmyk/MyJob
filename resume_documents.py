@@ -1078,7 +1078,7 @@ def build_resume_pdf(structured: dict, template_id: str = "ats_classic") -> byte
     ]
     for regular_path, bold_path in font_candidates:
         if regular_path.exists():
-            regular_name, bold_name = "LakejobResumeCN", "LakejobResumeCNBold"
+            regular_name, bold_name = "MyJobResumeCN", "MyJobResumeCNBold"
             if regular_name not in pdfmetrics.getRegisteredFontNames():
                 pdfmetrics.registerFont(TTFont(regular_name, str(regular_path)))
             if bold_name not in pdfmetrics.getRegisteredFontNames():

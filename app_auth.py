@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 
-AUTH_COOKIE_NAME = "lakejob_session"
+AUTH_COOKIE_NAME = "myjob_session"
 PASSWORD_ITERATIONS = 260_000
 USERNAME_RE = re.compile(r"^(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{8,12}$")
 PASSWORD_UPPER_RE = re.compile(r"[A-Z]")
@@ -155,14 +155,10 @@ class AuthManager:
         if existing_superadmin:
             return
         username = (
-            os.getenv("MYJOB_SUPERADMIN_USERNAME")
-            or os.getenv("LAKEJOB_SUPERADMIN_USERNAME")
-            or DEFAULT_SUPERADMIN_USERNAME
+            os.getenv("MYJOB_SUPERADMIN_USERNAME") or DEFAULT_SUPERADMIN_USERNAME
         )
         password = (
-            os.getenv("MYJOB_SUPERADMIN_PASSWORD")
-            or os.getenv("LAKEJOB_SUPERADMIN_PASSWORD")
-            or DEFAULT_SUPERADMIN_PASSWORD
+            os.getenv("MYJOB_SUPERADMIN_PASSWORD") or DEFAULT_SUPERADMIN_PASSWORD
         )
         uses_documented_default = (
             username == DEFAULT_SUPERADMIN_USERNAME

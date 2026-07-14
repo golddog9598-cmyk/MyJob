@@ -8,6 +8,21 @@ defineEmits(['toggle-theme'])
 
 const releases = [
   {
+    version: 'V0.0.5',
+    date: '2026-07-14',
+    summary: '统一 MyJob 的 Python CLI 包目录命名。',
+    groups: [
+      {
+        title: '项目结构',
+        items: [
+          'Python CLI 包目录统一命名为 MyJob_cli。',
+          '同步更新项目入口点、构建配置、开发文档与验证命令。',
+          'CLI 命令统一命名为 myjob，并移除旧环境变量和 Cookie 命名。',
+        ],
+      },
+    ],
+  },
+  {
     version: 'V0.0.4',
     date: '2026-07-14',
     summary: '建立独立 MyJob 仓库，并按当前产品能力重写项目文档。',

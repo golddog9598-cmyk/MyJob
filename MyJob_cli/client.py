@@ -1,4 +1,4 @@
-"""HTTPS client for the MyJob FastAPI backend."""
+"""HTTPS client for the MyJob backend API."""
 
 import os
 from typing import Optional
@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-BASE_URL = os.environ.get("MYJOB_API") or os.environ.get("LAKEJOB_API", "https://127.0.0.1:8010")
+BASE_URL = os.environ.get("MYJOB_API", "https://127.0.0.1:8010")
 _verify_env = os.environ.get("MYJOB_TLS_VERIFY", "").strip().lower()
 _local_https = urlparse(BASE_URL).hostname in {"127.0.0.1", "localhost", "::1"}
 _verify_tls = _verify_env not in {"false", "0", "no"} if _verify_env else not _local_https
@@ -17,8 +17,8 @@ def _request(method: str, path: str, *, json=None, data=None, files=None, timeou
     try:
         response = _client.request(method, path, json=json, data=data, files=files, timeout=timeout)
         if response.status_code == 401 and not path.startswith("/api/auth/"):
-            username = os.environ.get("MYJOB_USERNAME") or os.environ.get("LAKEJOB_USERNAME", "")
-            password = os.environ.get("MYJOB_PASSWORD") or os.environ.get("LAKEJOB_PASSWORD", "")
+            username = os.environ.get("MYJOB_USERNAME", "")
+            password = os.environ.get("MYJOB_PASSWORD", "")
             if username and password:
                 login = _client.post(
                     "/api/auth/login",
@@ -29,7 +29,7 @@ def _request(method: str, path: str, *, json=None, data=None, files=None, timeou
                     response = _client.request(method, path, json=json, data=data, files=files, timeout=timeout)
         return response
     except httpx.ConnectError:
-        return httpx.Response(503, text="Cannot connect to MyJob server. Run `lakejob server --start` first.")
+        return httpx.Response(503, text="Cannot connect to MyJob server. Run `myjob server --start` first.")
 
 
 def _post(path: str, json=None, timeout=120):

@@ -27,7 +27,7 @@ playwright install firefox
 ## Project Conventions
 
 - All Python code is flat (no src-layout for the main modules)
-- CLI module lives in `lakejob_cli/`
+- CLI module lives in `MyJob_cli/`
 - Database migrations are manual ALTER TABLE in `init_db()`
 - Frontend source lives in `resume_ui/`; production assets are built into `static/app/`
 - API returns JSON, CLI outputs JSON envelope
@@ -39,6 +39,6 @@ playwright install firefox
 python boss_app.py --port 8010
 
 # CLI testing
-lakejob status
-lakejob search "AI Agent" --city 北京
+myjob status
+myjob search "AI Agent" --city 北京
 ```

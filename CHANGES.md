@@ -105,15 +105,15 @@
 
 ---
 
-## 6. CLI 新增命令 (`lakejob_cli/`)
+## 6. CLI 新增命令 (`MyJob_cli/`)
 
 | 命令 | 说明 |
 |------|------|
-| `lakejob scan-apply --max-pages 5 --no-dedup --no-filter-inactive` | 多页扫描投递 |
-| `lakejob scan-apply-all --max-pages 5` | 翻页一键投递 |
-| `lakejob company-info <公司名> [--no-cache]` | 抓取公司信息 |
-| `lakejob company-check <公司名>` | 检查公司是否已发过 |
-| `lakejob companies-applied` | 列出所有已发过公司 |
+| `myjob scan-apply --max-pages 5 --no-dedup --no-filter-inactive` | 多页扫描投递 |
+| `myjob scan-apply-all --max-pages 5` | 翻页一键投递 |
+| `myjob company-info <公司名> [--no-cache]` | 抓取公司信息 |
+| `myjob company-check <公司名>` | 检查公司是否已发过 |
+| `myjob companies-applied` | 列出所有已发过公司 |
 
 ---
 

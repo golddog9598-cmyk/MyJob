@@ -1,4 +1,4 @@
-"""JSON envelope formatter — stdout always structured JSON."""
+"""JSON envelope formatter: stdout always contains structured JSON."""
 
 import json
 import sys

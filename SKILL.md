@@ -17,16 +17,16 @@ playwright install firefox
 按顺序跑，不需要先读完 README：
 
 ```bash
-lakejob server --start --port 8010    # 启动后台服务
-lakejob doctor                         # 环境诊断
-lakejob schema                         # 获取工具清单
-lakejob status                         # 检查登录态
+myjob server --start --port 8010    # 启动后台服务
+myjob doctor                         # 环境诊断
+myjob schema                         # 获取工具清单
+myjob status                         # 检查登录态
 ```
 
 完成标准：
-- `lakejob doctor` 返回 `ok=true`
-- `lakejob schema` 返回当前版本可用的工具描述
-- `lakejob status` 返回 `browser_running: true`
+- `myjob doctor` 返回 `ok=true`
+- `myjob schema` 返回当前版本可用的工具描述
+- `myjob status` 返回 `browser_running: true`
 
 **如 `browser_running: false`**：提示用户在浏览器打开 `https://127.0.0.1:8010/app`，设置页启动浏览器并登录招聘平台。
 
@@ -36,22 +36,22 @@ lakejob status                         # 检查登录态
 
 ```bash
 # 1. 搜索岗位
-lakejob search "AI Agent" --city 广州 --welfare "双休,五险一金"
+myjob search "AI Agent" --city 广州 --welfare "双休,五险一金"
 
 # 2. 查看岗位列表
-lakejob jobs --status pending --limit 20
+myjob jobs --status pending --limit 20
 
 # 3. AI 分析某个岗位匹配度
-lakejob analyze <job_url> --title "AI开发工程师"
+myjob analyze <job_url> --title "AI开发工程师"
 
 # 4. 收藏感兴趣的岗位
-lakejob shortlist add --job-url <job_url> --title "AI开发"
+myjob shortlist add --job-url <job_url> --title "AI开发"
 
 # 5. 批量投递
-lakejob apply-batch
+myjob apply-batch
 
 # 6. 查看投递漏斗
-lakejob stats
+myjob stats
 ```
 
 ---
@@ -114,7 +114,7 @@ lakejob stats
 | `ok` | 状态 | Agent 动作 |
 |------|------|-----------|
 | `true` | 成功 | 读取 `data`，按 `pagination` 翻页 |
-| `false` + HTTP 503 | 服务未启动 | 提示用户 `lakejob server --start` |
+| `false` + HTTP 503 | 服务未启动 | 提示用户 `myjob server --start` |
 | `false` + 500 | 浏览器未登录 | 提示用户登录 `https://127.0.0.1:8010/app` |
 | `false` + 429 | 今日上限 | 告知用户，等待次日 |
 | `false` + 404 | 资源不存在 | 确认参数正确 |
@@ -128,18 +128,18 @@ lakejob stats
 ```python
 import subprocess, json
 
-def lakejob_cmd(*args):
-    result = subprocess.run(["lakejob"] + list(args), capture_output=True, text=True)
+def myjob_cmd(*args):
+    result = subprocess.run(["myjob"] + list(args), capture_output=True, text=True)
     return json.loads(result.stdout)
 
 # 搜索
-r = lakejob_cmd("search", "AI Agent", "--city", "北京")
+r = myjob_cmd("search", "AI Agent", "--city", "北京")
 if r["ok"]:
     jobs = r["data"]
     print(f"找到 {r['total']} 个岗位")
 
 # 诊断
-r = lakejob_cmd("doctor")
+r = myjob_cmd("doctor")
 print("环境OK" if r["ok"] else f"问题: {r['checks']}")
 ```
 
@@ -148,19 +148,19 @@ print("环境OK" if r["ok"] else f"问题: {r['checks']}")
 ```typescript
 import { execSync } from 'child_process';
 
-function lakejob(...args: string[]) {
-  const stdout = execSync(`lakejob ${args.join(' ')}`).toString();
+function myjob(...args: string[]) {
+  const stdout = execSync(`myjob ${args.join(' ')}`).toString();
   return JSON.parse(stdout);
 }
 
-const result = lakejob('search', 'Golang', '--city', '广州');
+const result = myjob('search', 'Golang', '--city', '广州');
 console.log(`找到 ${result.total} 个岗位`);
 ```
 
 ### Shell
 
 ```bash
-result=$(lakejob search "Golang" --city 北京)
+result=$(myjob search "Golang" --city 北京)
 if echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d['ok'] else 1)"; then
   echo "搜索成功"
 fi
@@ -186,9 +186,9 @@ fi
 
 ```markdown
 当用户要求搜索职位、投递岗位、查看聊天等 BOSS 直聘操作时：
-1. 先运行 `lakejob doctor` 检查环境
+1. 先运行 `myjob doctor` 检查环境
 2. 若 `browser_running: false`，提示用户在浏览器登录
-3. 运行 `lakejob schema` 获取最新工具列表（不要硬编码命令）
+3. 运行 `myjob schema` 获取最新工具列表（不要硬编码命令）
 4. 根据用户意图调用对应命令
 5. 解析 stdout JSON，检查 `ok` 字段
 6. `ok=false` 时读取错误信息，给出可操作建议
