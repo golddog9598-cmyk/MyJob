@@ -21,12 +21,24 @@
         <p>{{ adminPortal ? '这里只接受管理员和超级管理员账号。' : mode === 'login' ? '验证通过后加载求职功能。' : '注册成功后将直接进入工作台。' }}</p>
       </div>
 
-      <div v-if="!adminPortal" class="auth-mode-switch" aria-label="登录或注册">
+      <div v-if="currentUser" class="auth-current-session" role="status">
+        <Icon icon="mdi:account-check-outline" aria-hidden="true" />
+        <div>
+          <strong>当前已登录 {{ currentUser.username }}</strong>
+          <span>你可以直接进入工作台，或退出当前账号后重新登录或注册。</span>
+        </div>
+        <div class="auth-current-actions">
+          <a class="primary-action" href="/app">进入工作台</a>
+          <button type="button" @click="$emit('switch-account')">退出并切换账号</button>
+        </div>
+      </div>
+
+      <div v-if="!adminPortal && !currentUser" class="auth-mode-switch" aria-label="登录或注册">
         <button type="button" :class="{ active: mode === 'login' }" @click="setMode('login')">登录</button>
         <button type="button" :class="{ active: mode === 'register' }" :disabled="!registrationEnabled" @click="setMode('register')">注册</button>
       </div>
 
-      <form class="auth-form" @submit.prevent="submit">
+      <form v-if="!currentUser" class="auth-form" @submit.prevent="submit">
         <label>
           <span>用户名</span>
           <input v-model.trim="form.username" name="username" autocomplete="username" required :minlength="mode === 'register' ? 8 : 3" :maxlength="mode === 'register' ? 12 : 48" :pattern="mode === 'register' ? '(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{8,12}' : undefined" :placeholder="mode === 'register' ? '8-12 位英文和数字' : adminPortal ? '输入管理员用户名' : '输入用户名'" />
@@ -52,8 +64,8 @@
         </button>
       </form>
 
-      <p v-if="adminPortal" class="auth-footnote"><Icon icon="mdi:shield-key-outline" />首次部署账号为 Admin，密码为 123456*。首次登录后必须修改密码。</p>
-      <p v-else class="auth-footnote"><Icon icon="mdi:information-outline" />此处只注册普通用户，管理员使用独立后台入口。</p>
+      <p v-if="adminPortal && !currentUser" class="auth-footnote"><Icon icon="mdi:shield-key-outline" />首次部署账号为 Admin，密码为 123456*。首次登录后必须修改密码。</p>
+      <p v-else-if="!currentUser" class="auth-footnote"><Icon icon="mdi:information-outline" />此处只注册普通用户，管理员使用独立后台入口。</p>
       <a v-if="adminPortal" class="auth-back-link" href="/"><Icon icon="mdi:arrow-left" />返回用户工作台</a>
     </section>
   </main>
@@ -68,11 +80,12 @@ import ThemeToggle from './ThemeToggle.vue'
 
 const props = defineProps({
   adminPortal: Boolean,
+  currentUser: { type: Object, default: null },
   registrationEnabled: { type: Boolean, default: true },
   initialMode: { type: String, default: 'login' },
   theme: { type: String, required: true },
 })
-const emit = defineEmits(['authenticated', 'toggle-theme'])
+const emit = defineEmits(['authenticated', 'toggle-theme', 'switch-account'])
 const mode = ref(props.adminPortal ? 'login' : props.initialMode === 'register' && props.registrationEnabled ? 'register' : 'login')
 const form = reactive({ username: '', password: '', confirmPassword: '' })
 const showPassword = ref(false)

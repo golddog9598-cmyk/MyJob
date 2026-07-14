@@ -8,6 +8,21 @@ defineEmits(['toggle-theme'])
 
 const releases = [
   {
+    version: 'V0.0.2',
+    date: '2026-07-14',
+    summary: '修复首页认证入口和登录状态下的路由行为。',
+    groups: [
+      {
+        title: '账户入口',
+        items: [
+          '首页、产品文档和更新日志统一使用一个“登录 / 注册”按钮。',
+          '点击认证入口后始终进入登录注册页面，不再因已有会话直接跳走。',
+          '已有会话会显示当前账号，可直接进入工作台或退出后切换账号。',
+        ],
+      },
+    ],
+  },
+  {
     version: 'V0.0.1',
     date: '首个版本',
     summary: '建立 MyJob 的账户、求职工作台与基础管理能力。',
@@ -62,8 +77,7 @@ const releases = [
       </nav>
       <div class="marketing-actions">
         <ThemeToggle :theme="theme" @toggle="$emit('toggle-theme')" />
-        <a class="marketing-login-link" href="/login">登录</a>
-        <a class="marketing-button marketing-button-small" href="/register">注册</a>
+        <a class="marketing-button marketing-button-small" href="/login">登录 / 注册</a>
       </div>
     </header>
 

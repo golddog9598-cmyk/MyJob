@@ -59,8 +59,7 @@ const workflow = [
 
       <div class="marketing-actions">
         <ThemeToggle :theme="theme" @toggle="$emit('toggle-theme')" />
-        <a class="marketing-login-link" href="/login">登录</a>
-        <a class="marketing-button marketing-button-small" href="/register">注册</a>
+        <a class="marketing-button marketing-button-small" href="/login">登录 / 注册</a>
       </div>
     </header>
 
@@ -103,7 +102,7 @@ const workflow = [
       <section class="marketing-platforms" aria-label="产品对接平台">
         <span class="marketing-platform-label">产品对接平台</span>
         <div class="marketing-platform-list">
-          <div><strong>BOSS 直聘</strong><span>V0.0.1 已接入</span></div>
+          <div><strong>BOSS 直聘</strong><span>已接入</span></div>
           <div><strong>智联招聘</strong><span>规划中</span></div>
           <div><strong>前程无忧</strong><span>规划中</span></div>
           <div><strong>猎聘</strong><span>规划中</span></div>

@@ -29,8 +29,7 @@ const documentSections = [
       </nav>
       <div class="marketing-actions">
         <ThemeToggle :theme="theme" @toggle="$emit('toggle-theme')" />
-        <a class="marketing-login-link" href="/login">登录</a>
-        <a class="marketing-button marketing-button-small" href="/register">注册</a>
+        <a class="marketing-button marketing-button-small" href="/login">登录 / 注册</a>
       </div>
     </header>
 
@@ -39,7 +38,7 @@ const documentSections = [
         <p class="marketing-eyebrow">产品文档</p>
         <h1>了解 MyJob 的工作方式</h1>
         <p>从创建账户到连接招聘平台，按顺序完成设置并开始管理求职流程。</p>
-        <span class="marketing-version">当前版本 V0.0.1</span>
+        <span class="marketing-version">当前版本 V0.0.2</span>
       </header>
 
       <div class="marketing-docs-layout">
@@ -72,7 +71,7 @@ const documentSections = [
 
           <section id="platforms">
             <h2>连接招聘平台</h2>
-            <p>V0.0.1 已接入 BOSS 直聘。智联招聘、前程无忧和猎聘处于规划阶段，将在后续版本逐步接入。</p>
+            <p>当前已接入 BOSS 直聘。智联招聘、前程无忧和猎聘处于规划阶段，将在后续版本逐步接入。</p>
             <p>使用 BOSS 直聘时，点击工作台的启动浏览器按钮，等待页面打开并完成登录。随后使用检查登录确认状态，再开始岗位操作。</p>
           </section>
 

@@ -4,7 +4,17 @@
   <ChangelogView v-else-if="pageKind === 'changelog'" :theme="theme" @toggle-theme="toggleTheme" />
   <template v-else>
   <div v-if="booting" class="app-boot" aria-live="polite"><BrandLogo compact /><p>正在检查 MyJob 登录状态</p></div>
-  <LoginView v-else-if="!portalAuthenticated" :admin-portal="adminPortal" :initial-mode="pageKind === 'register' ? 'register' : 'login'" :registration-enabled="auth.registration_enabled" :theme="theme" @toggle-theme="toggleTheme" @authenticated="onAuthenticated" />
+  <LoginView
+    v-else-if="authEntryPage || !portalAuthenticated"
+    :admin-portal="adminPortal"
+    :current-user="authEntryPage && portalAuthenticated ? auth.user : null"
+    :initial-mode="pageKind === 'register' ? 'register' : 'login'"
+    :registration-enabled="auth.registration_enabled"
+    :theme="theme"
+    @toggle-theme="toggleTheme"
+    @authenticated="onAuthenticated"
+    @switch-account="logoutForAuthSwitch"
+  />
   <AdminView v-else-if="adminPortal" :user="auth.user" :theme="theme" @toggle-theme="toggleTheme" @logout="logoutApp" @user-changed="onUserChanged" />
   <div v-else class="workspace-shell">
     <aside class="app-sidebar" :class="{ open: mobileNavOpen }">
@@ -104,6 +114,7 @@ const pageKind = ({
 })[normalizedPath] || 'home'
 const publicPage = ['home', 'docs', 'changelog'].includes(pageKind)
 const adminPortal = pageKind === 'admin'
+const authEntryPage = ['login', 'register'].includes(pageKind)
 const theme = ref(preferredTheme())
 const auth = reactive({ configured: true, registration_enabled: true, authenticated: false, user: null })
 const booting = ref(!publicPage)
@@ -123,7 +134,12 @@ let socketCleanup
 let summaryDebounce
 
 const browserStatus = computed(() => summary.value?.status || {})
-const portalAuthenticated = computed(() => auth.authenticated && (!adminPortal || ['admin', 'superadmin'].includes(auth.user?.role)))
+const portalAuthenticated = computed(() => {
+  if (!auth.authenticated) return false
+  return adminPortal
+    ? ['admin', 'superadmin'].includes(auth.user?.role)
+    : auth.user?.role === 'user'
+})
 const unreadCount = computed(() => (summary.value?.recent_conversations || []).reduce((sum, item) => sum + Number(item.unread_count || 0), 0))
 const socketLabel = computed(() => ({ open: '实时连接正常', connecting: '正在连接', closed: '等待连接' }[socketState.value] || '等待连接'))
 
@@ -143,11 +159,7 @@ async function checkAuth() {
     const status = await api.get('/api/auth/status', { force: true })
     Object.assign(auth, status)
     if (portalAuthenticated.value) {
-      if (!adminPortal && pageKind !== 'app') {
-        location.replace(ROUTES.app)
-        return
-      }
-      startRuntime()
+      if (adminPortal || pageKind === 'app') startRuntime()
     }
   } catch (exc) {
     notify({ type: 'error', message: `无法连接后端：${exc.message}` })
@@ -197,6 +209,15 @@ async function logoutApp() {
   summary.value = null
   api.invalidate()
   location.replace(adminPortal ? ROUTES.admin : ROUTES.login)
+}
+
+async function logoutForAuthSwitch() {
+  try { await api.post('/api/auth/logout') } catch { /* The local view still returns to signed-out mode. */ }
+  stopRuntime()
+  auth.authenticated = false
+  auth.user = null
+  summary.value = null
+  api.invalidate()
 }
 
 async function loadSummary(force = false) {

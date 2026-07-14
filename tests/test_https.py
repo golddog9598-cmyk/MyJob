@@ -32,7 +32,7 @@ def test_app_identity_and_spa_routes():
     expected = client.get("/").text
 
     assert boss_app.app.title == "MyJob"
-    assert boss_app.app.version == "V0.0.1"
+    assert boss_app.app.version == "V0.0.2"
     for path in ("/login", "/register", "/app", "/docs", "/changelog", "/MyJobaAdmin"):
         response = client.get(path)
         assert response.status_code == 200

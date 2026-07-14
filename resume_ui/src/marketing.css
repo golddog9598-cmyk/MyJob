@@ -187,24 +187,8 @@ body:has(.marketing-shell) {
 
 .marketing-theme-button:active,
 .marketing-button:active,
-.marketing-text-link:active,
-.marketing-login-link:active {
+.marketing-text-link:active {
   transform: translateY(1px);
-}
-
-.marketing-login-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 8px;
-  color: var(--marketing-muted);
-  font-size: 0.9rem;
-  font-weight: 650;
-  transition: color 180ms ease, transform 180ms ease;
-}
-
-.marketing-login-link:hover {
-  color: var(--marketing-ink);
 }
 
 .marketing-button {
@@ -1261,12 +1245,8 @@ body:has(.marketing-shell) {
     gap: 4px;
   }
 
-  .marketing-login-link {
-    padding: 0 6px;
-  }
-
   .marketing-button-small {
-    padding: 0 12px;
+    padding: 0 14px;
   }
 
   .marketing-hero-actions {
