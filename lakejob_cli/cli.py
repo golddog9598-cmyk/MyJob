@@ -11,7 +11,7 @@ from . import client, output
 
 @click.group()
 def main():
-    """MyJob - 求职自动化平台 V0.0.2
+    """MyJob - 求职自动化平台 V0.0.3
 
     命令返回结构化 JSON 到 stdout，Agent 友好。
     """
@@ -20,7 +20,7 @@ def main():
 # ── 版本 ──
 @main.command("version")
 def version_cmd():
-    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.2"}))
+    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.3"}))
 
 
 # ── Schema：AI Agent 工具描述 ──
