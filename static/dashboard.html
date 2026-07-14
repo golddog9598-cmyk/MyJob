@@ -1317,6 +1317,21 @@ td a:hover{color:var(--accent)}
 .confirm-modal .confirm-actions .btn{
   min-width:90px;
 }
+.status-result-modal .modal-box{max-width:400px}
+.status-result-modal .confirm-actions .btn{
+  justify-content:center;
+  text-align:center;
+}
+.status-result-modal .confirm-icon{
+  width:54px;height:54px;
+  display:flex;align-items:center;justify-content:center;
+  margin:0 auto 14px;
+  border-radius:50%;
+  font-size:26px;
+}
+.status-result-modal.success .confirm-icon{background:var(--green-soft);color:var(--green)}
+.status-result-modal.warning .confirm-icon{background:var(--orange-soft);color:var(--orange)}
+.status-result-modal.error .confirm-icon{background:var(--red-soft);color:var(--red)}
 /* ── 气泡确认提示 ── */
 .popover-confirm{
   position:fixed;
@@ -1565,8 +1580,25 @@ td a:hover{color:var(--accent)}
   .stats-grid{grid-template-columns:repeat(2,1fr)}
 }
 
+.resume-library-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 14px}.resume-library-toolbar input{width:230px}.resume-category-list{display:flex;gap:6px;flex-wrap:wrap}.resume-category{border:1px solid var(--border);border-radius:999px;background:var(--bg-2);color:var(--text-2);padding:5px 10px;font-size:11px;cursor:pointer}.resume-category.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.resume-template-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:14px}
+.resume-template-card{position:relative;border:2px solid var(--border);border-radius:12px;padding:10px;background:var(--bg-2);cursor:pointer;transition:.18s;overflow:hidden}
+.resume-template-card:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 8px 24px rgba(15,23,42,.12)}
+.resume-template-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,102,241,.18)}.resume-template-card.selected:after{content:'✓';position:absolute;right:15px;top:15px;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.template-mini{height:260px;overflow:hidden;background:#fff;border-radius:7px;color:#202124;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(15,23,42,.08)}
+.template-mini .resume-preview{font-size:6px!important;line-height:1.3!important;min-height:260px!important;text-align:left}.template-mini .resume-preview header{padding:11px 13px 7px}.template-mini .resume-preview h1{font-size:13px!important}.template-mini .resume-preview .role{font-size:7px;margin:2px 0}.template-mini .resume-preview .contact{font-size:5px}.template-mini .resume-preview .resume-body{padding:3px 13px 11px}.template-mini .resume-preview section{margin-top:6px}.template-mini .resume-preview section h3{font-size:7.5px;padding-bottom:1px;margin-bottom:2px}.template-mini .resume-preview section p{padding-left:6px;margin:1px 0}.template-mini .resume-preview.layout-two-column .resume-column{padding:4px 8px 12px}.template-mini .resume-preview.layout-sidebar .resume-aside{padding:12px 8px}.template-mini .resume-preview.layout-sidebar .resume-main{padding:5px 10px 12px}.template-mini .resume-preview.layout-sidebar .resume-aside h1{font-size:12px!important}.template-mini .resume-preview.section-band section h3,.template-mini .resume-preview.section-dark section h3{padding:2px 4px}.template-mini .resume-preview.section-card section{padding:4px 5px;border-radius:4px}
+.template-meta{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-top:9px}.template-meta b{font-size:13px}.template-feature-list{display:flex;gap:4px;flex-wrap:wrap;margin-top:7px}.template-feature{font-size:9.5px;color:var(--text-2);background:var(--bg-3);border:1px solid var(--border);border-radius:999px;padding:2px 6px}.template-feature.ats{color:var(--green);border-color:rgba(34,197,94,.28);background:var(--green-soft)}
+.selected-template-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.selected-template-detail{font-size:11px;color:var(--text-3)}
+.resume-selected-preview{height:430px;overflow:auto;background:#cbd5e1;border-radius:8px;color:#202124;padding:14px;margin-bottom:12px}.resume-selected-preview .resume-preview{min-height:560px;box-shadow:0 3px 14px rgba(15,23,42,.16)}
+.resume-preview-modal .modal-box{width:min(94vw,960px);max-width:960px;height:92vh;padding:14px;display:flex;flex-direction:column}.resume-preview-modal-body{flex:1;overflow:auto;background:#cbd5e1;padding:24px;border-radius:8px}.resume-preview-modal-body .resume-preview{width:min(100%,794px);min-height:1123px;margin:auto;box-shadow:0 8px 30px rgba(15,23,42,.2)}
+.resume-preview{--accent:#2563eb;--muted:#64748b;--sidebar:#dbeafe;box-sizing:border-box;background:#fff;color:#202124;width:100%;min-height:100%;font-family:'Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:1.55;overflow:hidden}.resume-preview *{box-sizing:border-box}.resume-preview header{padding:26px 30px 17px;border-bottom:2px solid var(--accent)}.resume-preview header.header-band{background:var(--accent);color:#fff;border:0;padding:24px 30px}.resume-preview header.header-inline{display:flex;align-items:baseline;gap:13px;flex-wrap:wrap}.resume-preview header.align-center{text-align:center}.resume-preview h1{font-size:29px;line-height:1.2;color:var(--accent);margin:0}.resume-preview .header-band h1{color:#fff}.resume-preview .role{font-size:14px;font-weight:700;margin:5px 0 3px}.resume-preview .contact{font-size:11px;color:var(--muted);overflow-wrap:anywhere}.resume-preview .header-band .contact{color:rgba(255,255,255,.82)}.resume-preview .resume-body{padding:8px 30px 27px}.resume-preview section{break-inside:avoid;margin-top:13px}.resume-preview section h3{font-size:15px;line-height:1.35;color:var(--accent);margin:0 0 6px;padding:0 0 3px;border-bottom:1px solid var(--accent)}.resume-preview section p{position:relative;margin:3px 0;padding-left:12px;white-space:pre-wrap;overflow-wrap:anywhere}.resume-preview section p:before{content:'•';position:absolute;left:0;color:var(--accent)}.resume-preview.section-plain section h3{border:0;text-transform:uppercase;letter-spacing:.08em}.resume-preview.section-band section h3{border:0;background:color-mix(in srgb,var(--accent) 10%,white);padding:5px 8px}.resume-preview.section-card section{border:1px solid color-mix(in srgb,var(--accent) 22%,white);border-radius:9px;padding:9px 11px}.resume-preview.section-card section h3{border:0}.resume-preview.section-dark section h3{background:var(--accent);color:#fff;border:0;padding:5px 9px}.resume-preview.has-timeline section p{margin-left:7px;padding-left:17px;border-left:1px solid color-mix(in srgb,var(--accent) 45%,white)}.resume-preview.has-timeline section p:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--accent);left:-4px;top:.55em}.resume-preview.layout-two-column .resume-columns{display:grid;grid-template-columns:34% 66%;min-height:inherit}.resume-preview.layout-two-column .resume-column{padding:10px 22px 26px}.resume-preview.layout-two-column .resume-column:first-child{background:color-mix(in srgb,var(--accent) 7%,white);padding-left:28px}.resume-preview.layout-two-column .resume-column:last-child{padding-right:28px}.resume-preview.layout-sidebar .resume-shell{display:grid;grid-template-columns:32% 68%;min-height:inherit}.resume-preview.layout-sidebar .resume-aside{background:var(--sidebar);padding:28px 20px;color:#1e3a5f}.resume-preview.layout-sidebar .resume-aside h1{font-size:25px}.resume-preview.layout-sidebar .resume-aside .contact{display:grid;gap:4px;margin-top:12px;color:#334155}.resume-preview.layout-sidebar .resume-main{padding:13px 28px 28px}.resume-preview.layout-sidebar section h3{font-size:14px}.resume-preview.is-compact{font-size:11.5px;line-height:1.4}.resume-preview.is-compact header{padding:18px 25px 11px}.resume-preview.is-compact .resume-body{padding:5px 25px 18px}.resume-preview.is-compact section{margin-top:8px}.resume-preview.is-compact h1{font-size:24px}
+.resume-workspace{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:14px}
+@media(max-width:900px){.resume-workspace{grid-template-columns:1fr}.resume-template-grid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}}
+
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
 </style>
+<link rel="stylesheet" href="/static/resume-editor/resume-editor.css">
+<script src="/static/resume-editor/resume-editor.js" defer></script>
 </head>
 <body>
 
@@ -1582,6 +1614,8 @@ td a:hover{color:var(--accent)}
     <nav class="sidebar-nav" id="sideNav">
       <a class="active" data-tab="search"><span class="icon">🔍</span><span>岗位搜索</span></a>
       <a data-tab="applications"><span class="icon">📋</span><span>岗位列表</span></a>
+      <a data-tab="resumes"><span class="icon">📄</span><span>简历模板</span></a>
+      <a data-tab="campaigns"><span class="icon">🎯</span><span>求职计划</span></a>
       <a data-tab="chat"><span class="icon">💬</span><span>聊天回复</span><span class="badge-count" id="navUnread" style="display:none;">0</span></a>
       <a data-tab="wechat"><span class="icon">📱</span><span>微信记录</span></a>
       <a data-tab="settings"><span class="icon">⚙️</span><span>设置</span></a>
@@ -1602,6 +1636,8 @@ td a:hover{color:var(--accent)}
       </div>
       <div style="display:flex;gap:6px;margin-left:auto;">
         <button class="btn btn-success btn-sm" id="btnStart" onclick="startSystem()">启动浏览器</button>
+        <button class="btn btn-sm" id="btnCheckLogin" onclick="checkLoginStatus()" disabled>检查登录</button>
+        <button class="btn btn-sm" id="btnLogout" onclick="logoutBoss()" disabled>登出</button>
         <button class="btn btn-danger btn-sm" id="btnStop" onclick="stopSystem()" disabled>停止</button>
       </div>
     </div>
@@ -1825,6 +1861,28 @@ td a:hover{color:var(--accent)}
       </div>
     </div>
 
+    <!-- Tab: Resume Templates -->
+    <div class="tab" id="tab-resumes">
+      <div id="resumeVueApp"><div class="section"><div class="empty">正在加载可视化简历编辑器...</div></div></div>
+    </div>
+
+    <!-- Tab: Campaigns -->
+    <div class="tab" id="tab-campaigns">
+      <div class="section"><h3>新建求职计划</h3>
+        <div class="setting-row"><label>计划名称</label><input id="campaignName" value="我的求职计划"></div>
+        <div class="setting-row"><label>目标岗位</label><input id="campaignKeywords" placeholder="AI Agent, Python 后端（逗号分隔）"></div>
+        <div class="setting-row"><label>目标城市</label><input id="campaignCities" placeholder="深圳, 广州（逗号分隔）"></div>
+        <div class="setting-row"><label>最低匹配分</label><input type="number" id="campaignMinScore" min="0" max="100" value="60"></div>
+        <div class="setting-row"><label>每轮岗位上限</label><input type="number" id="campaignMaxJobs" min="1" max="50" value="10"></div>
+        <div class="setting-row"><label>运行间隔（小时）</label><input type="number" id="campaignInterval" min="1" max="168" value="24"></div>
+        <div class="setting-row"><label>简历处理</label><select id="campaignTailor"><option value="true">自动生成 JD 定制稿</option><option value="false">不生成</option></select></div>
+        <div class="setting-row"><label>投递模式</label><select id="campaignApplyMode" onchange="toggleCampaignConfirm()"><option value="review">匹配后人工确认</option><option value="automatic">匹配后自动投递</option></select></div>
+        <div class="setting-row" id="campaignConfirmRow" style="display:none"><label>自动投递确认</label><label style="flex:1;text-align:left"><input type="checkbox" id="campaignAutoConfirm" style="width:auto;margin-right:6px">我确认自动投递；每日上限、公司去重和风控仍然生效</label></div>
+        <div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" onclick="createCampaign(false)">保存为暂停</button><button class="btn btn-success" onclick="createCampaign(true)">保存并启用</button><span style="font-size:11px;color:var(--text-3)">启用后登录浏览器时按间隔自动运行</span></div>
+      </div>
+      <div class="section"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="margin:0">计划与面试漏斗</h3><button class="btn btn-sm" onclick="loadCampaigns()">刷新</button></div><div id="campaignList"><div class="empty">暂无求职计划</div></div></div>
+    </div>
+
     <!-- Tab 3: Chat -->
     <div class="tab" id="tab-chat">
       <div class="chat-container">
@@ -1880,7 +1938,7 @@ td a:hover{color:var(--accent)}
       <div class="section"><h3>个人资料</h3>
         <div class="setting-row"><label>所在城市</label><input type="text" id="setLocation" placeholder="如：深圳、北京、远程" onchange="saveLocationToSettings()"></div>
         <div class="setting-row"><label>微信号</label><input type="text" id="setWechat" placeholder="AI 会在合适时机发给 HR"></div>
-        <div class="setting-row"><label>简历摘要</label><div class="setting-textarea-wrap"><textarea id="setResume" readonly placeholder="你的技能、项目经验……  AI 会在聊天中引用这些信息" rows="6"></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setResume')">修改</button></div></div>
+        <div class="setting-row"><label>完整主简历</label><div class="setting-textarea-wrap"><textarea id="setResume" readonly placeholder="粘贴真实完整简历；JD 定制和聊天都会以此为唯一事实来源" rows="12"></textarea><button type="button" class="prompt-edit-btn" onclick="togglePromptEdit(this,'setResume')">修改</button></div></div>
       </div>
 
       <div class="section"><h3>招呼语</h3>
@@ -1905,7 +1963,7 @@ td a:hover{color:var(--accent)}
       <div class="section"><h3>系统</h3>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
           <button class="btn btn-primary" id="btnSaveSettings" onclick="saveSettings()">保存设置</button>
-          <button class="btn btn-sm" onclick="doRelogin()">重新扫码登录</button>
+          <button class="btn btn-sm" id="btnRelogin" onclick="doRelogin()">重新扫码登录</button>
           <span id="sessionStatus" style="font-size:10.5px;color:var(--text-3);line-height:26px;font-family:var(--mono);"></span>
           <span style="flex:1"></span>
           <button class="btn btn-sm btn-danger" onclick="confirmRestoreDefaults()">恢复默认值</button>
@@ -1921,6 +1979,7 @@ td a:hover{color:var(--accent)}
 
 <script>
 let activeTab='search',activeConvId=null,ws=null,conversations=[],currentSearchJobs=[],searchInFlight=false,sessionSearchPending=0,sessionSearchApplied=0,sessionSearchFiltered=0,clearApiKeyFlag=false;
+let selectedResumeTemplate='ats_classic',resumeTemplates=[],resumeTemplateCategory='全部',resumeTemplatePreviewCache={};
 
 // 默认值（与用户数据库 settings 保持一致）
 const DEFAULT_RESUME_SUMMARY = `【岗位经验】
@@ -1997,8 +2056,10 @@ function switchTab(tab){
     if(on){t.style.animation='none';t.offsetHeight;t.style.animation='';t.classList.add('active');}
     else{t.classList.remove('active');}
   });
-  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'岗位列表',chat:'聊天回复',wechat:'微信记录',settings:'设置'}[tab]||'';
+  document.getElementById('pageTitle').textContent={search:'岗位搜索',applications:'岗位列表',resumes:'简历模板',campaigns:'求职计划',chat:'聊天回复',wechat:'微信记录',settings:'设置'}[tab]||'';
   if(tab==='applications'){loadApplications();refreshStatus();}
+  if(tab==='resumes')document.dispatchEvent(new CustomEvent('resume-editor-open'));
+  if(tab==='campaigns')loadCampaigns();
   if(tab==='chat')loadConversations();
   if(tab==='wechat'){loadWechatExchanges();startWechatAutoRefresh();}else{stopWechatAutoRefresh();}
 }
@@ -2095,6 +2156,8 @@ function refreshStatus(){
     updateStatusUI(s);
     // statToday 改为「列表内投递」，数据从 /api/stats 取，不再用 today_applications
     document.getElementById('btnStart').disabled=s.browser_running;
+    document.getElementById('btnCheckLogin').disabled=!s.browser_running;
+    document.getElementById('btnLogout').disabled=!s.browser_running;
     document.getElementById('btnStop').disabled=!s.browser_running;
   }).catch(()=>{});
   // /api/stats 同步到：搜索页 funnel + 投递记录页 stat 卡片（同一个数据源）
@@ -2125,15 +2188,69 @@ function updateStatusUI(s){
   document.getElementById('monitorStatus').textContent=s.monitor_running?(s.monitor_paused?'已暂停':'运行中'):'未启动';
 }
 
+function showStatusModal(type,title,message){
+  document.querySelectorAll('.status-result-modal').forEach(el=>el.remove());
+  const overlay=document.createElement('div');
+  const kind=['success','warning','error'].includes(type)?type:'warning';
+  const icon=kind==='success'?'✓':(kind==='error'?'×':'!');
+  overlay.className='analyze-modal-overlay confirm-modal status-result-modal '+kind;
+  overlay.innerHTML='<div class="modal-box" role="dialog" aria-modal="true" aria-label="'+esc(title)+'">'
+    +'<div class="confirm-icon">'+icon+'</div>'
+    +'<div class="confirm-title">'+esc(title)+'</div>'
+    +'<div class="confirm-desc">'+esc(message)+'</div>'
+    +'<div class="confirm-actions"><button class="btn btn-sm btn-primary" data-action="close">知道了</button></div>'
+    +'</div>';
+  document.body.appendChild(overlay);
+  overlay.querySelector('[data-action="close"]').onclick=()=>overlay.remove();
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+}
+
+function checkLoginStatus(options){
+  options=options||{};
+  const btn=document.getElementById('btnCheckLogin');
+  btn.disabled=true;btn.textContent='检查中...';
+  return fetch('/api/system/check-login',{method:'POST'}).then(async r=>{
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.message||'检查失败');
+    const type=d.logged_in?'success':(d.browser_running?'warning':'error');
+    showStatusModal(type,d.logged_in?'登录状态正常':'尚未登录',d.message||'未能确认登录状态');
+    const session=document.getElementById('sessionStatus');
+    if(session)session.textContent=d.logged_in?'登录态正常':'尚未登录';
+    refreshStatus();
+    return d;
+  }).catch(e=>{
+    showStatusModal('error','检查登录失败',e.message||'网络请求失败');
+  }).finally(()=>{btn.textContent='检查登录';refreshStatus();});
+}
+
+function logoutBoss(){
+  const btn=document.getElementById('btnLogout');
+  btn.disabled=true;btn.textContent='登出中...';
+  fetch('/api/system/logout',{method:'POST'}).then(async r=>{
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.message||'登出失败');
+    if(d.status!=='ok')throw new Error(d.message||'登出失败');
+    showStatusModal('success','已退出登录',d.message||'BOSS 登录状态已清除');
+    const session=document.getElementById('sessionStatus');
+    if(session)session.textContent='尚未登录';
+  }).catch(e=>{
+    showStatusModal('error','登出失败',e.message||'网络请求失败');
+  }).finally(()=>{btn.textContent='登出';refreshStatus();});
+}
+
 function startSystem(){
   document.getElementById('btnStart').disabled=true;
   toast('正在启动浏览器…','info',1800);
   fetch('/api/system/start',{method:'POST'}).then(r=>r.json()).then(d=>{
-    if(d.status==='started'){refreshStatus();toast('浏览器已启动','success');}
+    if(d.status==='started'||d.status==='already_started'){
+      refreshStatus();
+      toast(d.status==='started'?'浏览器已启动':'浏览器已在运行','success');
+      return checkLoginStatus({automatic:true});
+    }
     else{toast('启动失败: '+(d.message||'未知'),'error');document.getElementById('btnStart').disabled=false;}
   }).catch(()=>{toast('启动失败','error');document.getElementById('btnStart').disabled=false;});
 }
-function stopSystem(){toast('正在停止…','info',1500);fetch('/api/system/stop',{method:'POST'}).then(()=>{refreshStatus();toast('已停止','success');});}
+function stopSystem(){fetch('/api/system/stop',{method:'POST'}).then(()=>{refreshStatus();toast('已停止','success');});}
 function doRelogin(){
   if(!confirm('浏览器将打开BOSS登录页，确定继续？'))return;
   let b=document.getElementById('btnRelogin');if(b){b.disabled=true;b.textContent='等待扫码...';}
@@ -2142,8 +2259,8 @@ function doRelogin(){
   fetch('/api/system/relogin',{method:'POST'}).then(r=>r.json()).then(d=>{
     if(b){b.disabled=false;b.textContent='重新扫码登录';}
     document.getElementById('sessionStatus').textContent=d.status==='ok'?'登录态正常':(d.message||'失败');
-    toast(d.status==='ok'?'登录成功':'登录失败',d.status==='ok'?'success':'error');
-  }).catch(()=>{if(b){b.disabled=false;b.textContent='重新扫码登录';}toast('请求失败','error');});
+    showStatusModal(d.status==='ok'?'success':'error',d.status==='ok'?'登录成功':'登录失败',d.message||'BOSS 登录流程已结束');
+  }).catch(()=>{if(b){b.disabled=false;b.textContent='重新扫码登录';}showStatusModal('error','登录失败','请求失败，请稍后重试');});
 }
 function manualHeartbeat(){
   document.getElementById('sessionStatus').textContent='检测中...';
@@ -2226,6 +2343,7 @@ function renderJobs(jobs){
     let acts='';
     if((s==='pending'||s==='failed')&&hasUrl)acts+='<button class="btn btn-xs btn-primary" data-action="apply" data-url="'+attr(j.job_url)+'">投递</button> ';
     acts+='<button class="btn btn-xs btn-ghost" onclick="analyzeJob(\''+attr(j.job_url)+'\',\''+attr(titleText)+'\',\''+attr(j.company||'')+'\',\''+attr((j.description||'').slice(0,500))+'\',\''+attr(j.company_id||'')+'\','+(j.company_already_applied?'true':'false')+')">分析</button> ';
+    acts+='<button class="btn btn-xs btn-ghost" onclick="tailorResume(\''+attr(j.job_url)+'\',\''+attr(titleText)+'\',\''+attr(j.company||'')+'\',\''+attr(j.city||'')+'\',\''+attr((j.description||'').slice(0,1000))+'\')">定制简历</button> ';
     acts+='<button class="btn btn-xs btn-ghost" onclick="toggleShortlist(\''+attr(j.job_url)+'\',\''+attr(titleText)+'\',\''+attr(j.company||'')+'\',\''+attr(j.salary||'')+'\',\''+attr(j.city||'')+'\',this)">收藏</button>';
 
     let hrActiveTag='';
@@ -2332,6 +2450,129 @@ function analyzeJob(url,title,company,desc,companyId,companyAlreadyApplied){
   }).catch(e=>{document.getElementById('analyzeResult').innerHTML='<div style="color:var(--red);">失败: '+e.message+'</div>';});
 }
 
+function tailorResume(url,title,company,city,desc){
+  let m=document.createElement('div');m.className='analyze-modal-overlay';
+  m.innerHTML='<div class="modal-box" style="max-width:860px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3>JD 定制简历</h3><button onclick="this.closest(\'.analyze-modal-overlay\').remove()" style="background:none;border:none;color:var(--text-2);font-size:20px;cursor:pointer">&times;</button></div><div id="tailorResult" style="display:flex;align-items:center;gap:10px;color:var(--text-2)"><div class="spinner spinner-lg"></div> 正在按 JD 重排简历并进行事实审计...</div></div>';
+  document.body.appendChild(m);
+  fetch('/api/jobs/tailor-resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,job_title:title,company:company,city:city,description:desc})}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'生成失败');return d;}).then(d=>{
+    const tr=d.tailored_resume||{},result=tr.result||{},audit=result.audit||{};
+    const warn=audit.passed?'<div class="status-banner success">✓ 未发现主简历之外的新数字；仍建议投递前人工通读</div>':'<div class="status-banner" style="color:var(--orange)">⚠ '+esc(audit.warning||'需要人工核实')+' 新数字：'+esc((audit.unsupported_numbers||[]).join(', '))+'</div>';
+    const changes=Array.isArray(result.changes)&&result.changes.length?'<div style="margin:12px 0"><b>本次调整</b><ul>'+result.changes.map(x=>'<li>'+esc(x.section||'')+'：'+esc(x.change||'')+'（'+esc(x.reason||'')+'）</li>').join('')+'</ul></div>':'';
+    document.getElementById('tailorResult').style.display='block';
+    const tpl=encodeURIComponent(selectedResumeTemplate||tr.template_id||'ats_classic');
+    document.getElementById('tailorResult').innerHTML=warn+changes+'<div style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0"><button class="btn btn-primary" onclick="approveTailoredResume('+tr.id+',this)">确认可用</button><a class="btn btn-sm" href="/api/resumes/tailored/'+tr.id+'/download?format=docx&template_id='+tpl+'">下载 DOCX</a><a class="btn btn-sm" href="/api/resumes/tailored/'+tr.id+'/download?format=pdf&template_id='+tpl+'">下载 PDF</a><a class="btn btn-sm" href="/api/resumes/tailored/'+tr.id+'/download?format=html&template_id='+tpl+'">HTML</a><a class="btn btn-sm" href="/api/resumes/tailored/'+tr.id+'/download?format=md&template_id='+tpl+'">Markdown</a><button class="btn btn-sm" onclick="navigator.clipboard.writeText(document.getElementById(\'tailoredContent\').textContent);toast(\'已复制\',\'success\')">复制</button></div><pre id="tailoredContent" style="white-space:pre-wrap;max-height:55vh;overflow:auto;padding:16px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);font:12px/1.7 var(--mono)">'+esc(tr.content||'')+'</pre>';
+  }).catch(e=>{document.getElementById('tailorResult').innerHTML='<div style="color:var(--red)">失败：'+esc(e.message)+'</div>';});
+}
+function approveTailoredResume(id,btn){
+  fetch('/api/resumes/tailored/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'approved'})}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'确认失败');btn.textContent='✓ 已确认';btn.disabled=true;toast('定制简历已确认可用','success');}).catch(e=>toast(e.message,'error'));
+}
+
+function loadResumeModule(){
+  resumeTemplatePreviewCache={};
+  Promise.all([fetch('/api/resume-templates').then(r=>r.json()),fetch('/api/resumes/master').then(r=>r.json())]).then(([td,rd])=>{
+    resumeTemplates=td.templates||[];
+    const resume=rd.resume||null;
+    if(resume&&resume.template_id)selectedResumeTemplate=resume.template_id;
+    renderResumeTemplateCategories();renderResumeTemplates();
+    const editor=document.getElementById('resumeEditor');if(editor)editor.value=resume?resume.content||'':'';
+    const meta=document.getElementById('resumeMeta');if(meta)meta.textContent=resume?((resume.source_filename||resume.name||'主简历')+' · '+(resume.source_format||'markdown')+' · '+(resume.parse_status||'ready')):'尚未创建主简历';
+    updateResumeExportLinks();
+    loadSelectedTemplatePreview();
+  }).catch(e=>toast('简历模块加载失败: '+e.message,'error'));
+  loadTailoredResumeLibrary();
+}
+function renderResumeTemplateCategories(){
+  const box=document.getElementById('resumeTemplateCategories');if(!box)return;
+  const categories=['全部',...new Set(resumeTemplates.map(t=>t.category).filter(Boolean))];
+  if(!categories.includes(resumeTemplateCategory))resumeTemplateCategory='全部';
+  box.innerHTML=categories.map(c=>'<button class="resume-category '+(c===resumeTemplateCategory?'active':'')+'" onclick="setResumeTemplateCategory(\''+attr(c)+'\')">'+esc(c)+'</button>').join('');
+}
+function setResumeTemplateCategory(category){resumeTemplateCategory=category;renderResumeTemplateCategories();renderResumeTemplates();}
+function renderResumeTemplates(){
+  const grid=document.getElementById('resumeTemplateGrid');if(!grid)return;
+  const query=(document.getElementById('resumeTemplateSearch')?.value||'').trim().toLowerCase(),atsOnly=!!document.getElementById('resumeAtsOnly')?.checked;
+  const visible=resumeTemplates.filter(t=>(resumeTemplateCategory==='全部'||t.category===resumeTemplateCategory)&&(!atsOnly||t.ats_friendly)&&(!query||[t.name,t.category,t.description,...(t.features||[])].join(' ').toLowerCase().includes(query)));
+  const count=document.getElementById('resumeTemplateCount');if(count)count.textContent='共 '+resumeTemplates.length+' 套，当前显示 '+visible.length+' 套 · 切换模板不会改写简历内容';
+  if(!visible.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1">没有符合条件的模板</div>';return;}
+  grid.innerHTML=visible.map(t=>'<div class="resume-template-card '+(t.id===selectedResumeTemplate?'selected':'')+'" data-template="'+attr(t.id)+'" onclick="selectResumeTemplate(\''+attr(t.id)+'\')"><div class="template-mini" id="templateMini_'+attr(t.id)+'"><div class="empty" style="padding-top:90px">正在生成预览...</div></div><div class="template-meta"><div><b>'+esc(t.name)+'</b><div style="font-size:10px;color:var(--text-3);margin-top:3px">'+esc(t.description)+'</div></div><span class="badge badge-applied">'+esc(t.category)+'</span></div><div class="template-feature-list">'+(t.features||[]).map(x=>'<span class="template-feature '+(x==='ATS'?'ats':'')+'">'+esc(x)+'</span>').join('')+'</div></div>').join('');
+  visible.forEach(t=>loadTemplateCardPreview(t.id));
+}
+function loadTemplateCardPreview(id){
+  const box=document.getElementById('templateMini_'+id);if(!box)return;
+  if(resumeTemplatePreviewCache[id]){box.innerHTML=resumeTemplatePreviewCache[id];return;}
+  fetch('/api/resume-templates/'+encodeURIComponent(id)+'/preview').then(r=>{if(!r.ok)throw new Error('预览失败');return r.text();}).then(h=>{resumeTemplatePreviewCache[id]=h;const current=document.getElementById('templateMini_'+id);if(current)current.innerHTML=h;}).catch(()=>{const current=document.getElementById('templateMini_'+id);if(current)current.innerHTML='<div class="empty">预览加载失败</div>';});
+}
+function selectResumeTemplate(id,persist=true){
+  selectedResumeTemplate=id;renderResumeTemplates();updateResumeExportLinks();loadSelectedTemplatePreview();
+  if(persist){fetch('/api/resumes/master/template',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({template_id:id})}).then(async r=>{if(r.ok)toast('已选择模板','success',1200);}).catch(()=>{});}
+}
+function loadSelectedTemplatePreview(){
+  const box=document.getElementById('selectedTemplatePreview');if(!box)return;
+  const template=resumeTemplates.find(t=>t.id===selectedResumeTemplate),detail=document.getElementById('selectedTemplateDetail');
+  if(detail)detail.textContent=template?(template.name+' · '+(template.features||[]).join(' / ')):selectedResumeTemplate;
+  const cached=resumeTemplatePreviewCache[selectedResumeTemplate];if(cached){box.innerHTML=cached;return;}
+  fetch('/api/resume-templates/'+encodeURIComponent(selectedResumeTemplate)+'/preview').then(r=>{if(!r.ok)throw new Error('预览加载失败');return r.text();}).then(h=>{resumeTemplatePreviewCache[selectedResumeTemplate]=h;box.innerHTML=h;}).catch(()=>{box.innerHTML='<div class="empty">预览加载失败</div>';});
+}
+function openResumePreviewModal(){
+  const template=resumeTemplates.find(t=>t.id===selectedResumeTemplate),m=document.createElement('div');m.className='analyze-modal-overlay resume-preview-modal';
+  m.innerHTML='<div class="modal-box" role="dialog" aria-modal="true"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><h3 style="margin:0">'+esc(template?.name||'简历预览')+'</h3><div style="font-size:11px;color:var(--text-3);margin-top:3px">当前简历真实内容 · '+esc((template?.features||[]).join(' / '))+'</div></div><button class="btn btn-sm" data-close>关闭</button></div><div class="resume-preview-modal-body"><div class="empty">正在生成完整预览...</div></div></div>';
+  document.body.appendChild(m);m.querySelector('[data-close]').onclick=()=>m.remove();m.addEventListener('click',e=>{if(e.target===m)m.remove();});
+  const put=h=>{const body=m.querySelector('.resume-preview-modal-body');if(body)body.innerHTML=h;};
+  if(resumeTemplatePreviewCache[selectedResumeTemplate])put(resumeTemplatePreviewCache[selectedResumeTemplate]);else fetch('/api/resume-templates/'+encodeURIComponent(selectedResumeTemplate)+'/preview').then(r=>r.text()).then(h=>{resumeTemplatePreviewCache[selectedResumeTemplate]=h;put(h);}).catch(()=>put('<div class="empty">预览加载失败</div>'));
+}
+function updateResumeExportLinks(){
+  const map={exportMasterDocx:'docx',exportMasterPdf:'pdf',exportMasterHtml:'html',exportMasterMd:'md'};
+  Object.entries(map).forEach(([id,fmt])=>{const el=document.getElementById(id);if(el)el.href='/api/resumes/master/export?format='+fmt+'&template_id='+encodeURIComponent(selectedResumeTemplate);});
+}
+function uploadResumeFile(){
+  const input=document.getElementById('resumeUploadFile'),file=input.files&&input.files[0];if(!file){toast('请选择简历文件','warning');return;}
+  const form=new FormData();form.append('file',file);form.append('template_id',selectedResumeTemplate);
+  document.getElementById('resumeParseStatus').innerHTML='<div class="status-banner"><div class="spinner"></div> 正在解析 '+esc(file.name)+'...</div>';
+  fetch('/api/resumes/upload',{method:'POST',body:form}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'解析失败');document.getElementById('resumeParseStatus').innerHTML='<div class="status-banner success">解析成功：'+d.parse.characters+' 字符，识别 '+d.parse.sections+' 个模块，已套用当前模板</div>';loadResumeModule();toast('简历上传解析成功','success');}).catch(e=>{document.getElementById('resumeParseStatus').innerHTML='<div class="status-banner">'+esc(e.message)+'</div>';toast(e.message,'error');});
+}
+function createResumeFromTemplate(){
+  const name=prompt('简历名称或姓名','我的简历');if(name===null)return;
+  fetch('/api/resumes/create-from-template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name||'我的简历',template_id:selectedResumeTemplate,content:''})}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'创建失败');loadResumeModule();toast('已按模板创建简历骨架','success');}).catch(e=>toast(e.message,'error'));
+}
+function saveResumeEditor(){
+  const content=document.getElementById('resumeEditor').value.trim();if(!content){toast('简历内容不能为空','warning');return;}
+  fetch('/api/resumes/master',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'主简历',content:content,source_format:'markdown'})}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'保存失败');toast('简历已保存','success');loadResumeModule();}).catch(e=>toast(e.message,'error'));
+}
+function loadTailoredResumeLibrary(){
+  const box=document.getElementById('tailoredResumeLibrary');if(!box)return;
+  fetch('/api/resumes/tailored?limit=100').then(r=>r.json()).then(d=>{const list=d.resumes||[];if(!list.length){box.innerHTML='<div class="empty">暂无定制简历</div>';return;}box.innerHTML='<div class="table-wrap"><table><thead><tr><th>目标岗位</th><th>公司</th><th>状态</th><th>模板导出</th></tr></thead><tbody>'+list.map(x=>'<tr><td>'+esc(x.job_title||'定制简历')+'</td><td>'+esc(x.company||'')+'</td><td><span class="badge badge-applied">'+esc(x.status||'draft')+'</span></td><td><a class="btn btn-sm" href="/api/resumes/tailored/'+x.id+'/download?format=docx&template_id='+encodeURIComponent(selectedResumeTemplate)+'">DOCX</a> <a class="btn btn-sm" href="/api/resumes/tailored/'+x.id+'/download?format=pdf&template_id='+encodeURIComponent(selectedResumeTemplate)+'">PDF</a> <a class="btn btn-sm" href="/api/resumes/tailored/'+x.id+'/download?format=html&template_id='+encodeURIComponent(selectedResumeTemplate)+'">HTML</a></td></tr>').join('')+'</tbody></table></div>';}).catch(e=>{box.innerHTML='<div class="empty">加载失败</div>';});
+}
+
+function toggleCampaignConfirm(){
+  const auto=document.getElementById('campaignApplyMode').value==='automatic';
+  document.getElementById('campaignConfirmRow').style.display=auto?'flex':'none';
+  if(!auto)document.getElementById('campaignAutoConfirm').checked=false;
+}
+function splitCampaignInput(id){return(document.getElementById(id).value||'').split(/[,，\n]/).map(x=>x.trim()).filter(Boolean);}
+function createCampaign(start){
+  const mode=document.getElementById('campaignApplyMode').value,confirmed=document.getElementById('campaignAutoConfirm').checked;
+  const body={name:document.getElementById('campaignName').value||'求职计划',keywords:splitCampaignInput('campaignKeywords'),cities:splitCampaignInput('campaignCities'),min_match_score:Number(document.getElementById('campaignMinScore').value||60),max_jobs_per_run:Number(document.getElementById('campaignMaxJobs').value||10),interval_hours:Number(document.getElementById('campaignInterval').value||24),auto_tailor:document.getElementById('campaignTailor').value==='true',apply_mode:mode,auto_apply_confirmed:confirmed,status:start?'active':'paused'};
+  if(!body.keywords.length||!body.cities.length){toast('请填写目标岗位和城市','warning');return;}
+  if(mode==='automatic'&&!confirmed){toast('自动投递需要勾选确认','warning');return;}
+  fetch('/api/campaigns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'创建失败');toast(start?'计划已启用':'计划已保存','success');loadCampaigns();}).catch(e=>toast(e.message,'error'));
+}
+function loadCampaigns(){
+  fetch('/api/campaigns').then(r=>r.json()).then(d=>{
+    const list=document.getElementById('campaignList'),items=d.campaigns||[];
+    if(!items.length){list.innerHTML='<div class="empty">暂无求职计划</div>';return;}
+    list.innerHTML=items.map(c=>{
+      const p=c.pipeline||{},cands=c.candidates||[];
+      const rows=cands.slice(0,10).map(j=>'<tr><td><a target="_blank" href="'+attr(j.job_url)+'">'+esc(j.job_title||'')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+j.match_score+'</td><td>'+esc(j.pipeline_status||'review')+'</td><td>'+(j.tailored_resume_id?'<a href="/api/resumes/tailored/'+j.tailored_resume_id+'/download?format=html">定制稿</a>':'—')+'</td></tr>').join('');
+      return'<div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin-bottom:12px"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:15px">'+esc(c.name)+'</b><span class="badge '+(c.status==='active'?'badge-applied':'badge-skipped')+'">'+(c.status==='active'?'运行中':'已暂停')+'</span><span style="color:var(--text-3);font-size:11px">'+esc(c.keywords.join(' / '))+' · '+esc(c.cities.join(' / '))+' · ≥'+c.min_match_score+'分 · '+c.interval_hours+'h</span><span style="flex:1"></span><button class="btn btn-sm btn-primary" onclick="runCampaign('+c.id+',this)">立即运行</button><button class="btn btn-sm" onclick="setCampaignStatus('+c.id+',\''+(c.status==='active'?'paused':'active')+'\')">'+(c.status==='active'?'暂停':'启用')+'</button></div><div class="stats-grid" style="margin:12px 0"><div class="stat-card"><div class="num">'+(p.review||0)+'</div><div class="lbl">待确认</div></div><div class="stat-card"><div class="num">'+(p.applied||0)+'</div><div class="lbl">已投递</div></div><div class="stat-card"><div class="num">'+(p.replied||0)+'</div><div class="lbl">HR回复</div></div><div class="stat-card"><div class="num">'+(p.interview||0)+'</div><div class="lbl">面试意向</div></div></div>'+(rows?'<div class="table-wrap"><table><thead><tr><th>岗位</th><th>公司</th><th>匹配分</th><th>阶段</th><th>简历</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div style="font-size:12px;color:var(--text-3)">尚未运行</div>')+'</div>';
+    }).join('');
+  }).catch(e=>toast('加载计划失败: '+e.message,'error'));
+}
+function runCampaign(id,btn){
+  btn.disabled=true;btn.innerHTML='<div class="spinner"></div> 运行中';
+  fetch('/api/campaigns/'+id+'/run',{method:'POST'}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'运行失败');toast('计划运行完成','success');loadCampaigns();}).catch(e=>{toast(e.message,'error');btn.disabled=false;btn.textContent='立即运行';});
+}
+function setCampaignStatus(id,status){fetch('/api/campaigns/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})}).then(async r=>{let d=await r.json();if(!r.ok)throw new Error(d.detail||'操作失败');loadCampaigns();}).catch(e=>toast(e.message,'error'));}
+
 function toggleShortlist(url,title,company,salary,city,btn){
   fetch('/api/shortlists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_url:url,title,company,salary,city})}).then(r=>r.json()).then(d=>{
     if(d.status==='already_exists'||d.status==='duplicate'){btn.textContent='已收藏';btn.style.opacity='.5';toast('已收藏过','info',1500);}
@@ -2354,7 +2595,7 @@ function renderAppPage(){
   let page=appAllJobs.slice(start,start+APP_PAGE_SIZE);
   if(!total){tbody.innerHTML='<tr><td colspan="6" class="empty">暂无记录</td></tr>';document.getElementById('appPagination').innerHTML='';return;}
   let sl={pending:'待投递',applied:'已投递',replied:'需要回复',skipped:'已跳过',failed:'失败',filtered:'已过滤'},sb={pending:'badge-pending',applied:'badge-applied',replied:'badge-replied',skipped:'badge-skipped',failed:'badge-failed',filtered:'badge-filtered'};
-  tbody.innerHTML=page.map(j=>{let s=j.status||'pending';return'<tr><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(j.job_title||j.title||'未知')+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button>':'')+'</td></tr>';}).join('');
+  tbody.innerHTML=page.map(j=>{let s=j.status||'pending',jt=j.job_title||j.title||'未知';return'<tr><td><a href="'+attr(j.job_url)+'" target="_blank">'+esc(jt)+'</a></td><td>'+esc(j.company||'')+'</td><td>'+esc(j.salary||'')+'</td><td>'+esc(j.city||'')+'</td><td><span class="badge '+sb[s]+'">'+sl[s]+'</span></td><td>'+(j.job_url?'<button class="btn btn-sm btn-primary" onclick="applyOne(\''+attr(j.job_url)+'\',this)">投递</button> <button class="btn btn-sm" onclick="tailorResume(\''+attr(j.job_url)+'\',\''+attr(jt)+'\',\''+attr(j.company||'')+'\',\''+attr(j.city||'')+'\',\''+attr((j.description||'').slice(0,1000))+'\')">定制简历</button>':'')+'</td></tr>';}).join('');
   document.getElementById('appPagination').innerHTML='<button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage=1;renderAppPage()">«</button><button '+(appCurrentPage<=1?'disabled':'')+' onclick="appCurrentPage--;renderAppPage()">‹</button><span>'+(start+1)+'-'+Math.min(start+APP_PAGE_SIZE,total)+' / '+total+'</span><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage++;renderAppPage()">›</button><button '+(appCurrentPage>=totalPages?'disabled':'')+' onclick="appCurrentPage=appTotalPages;renderAppPage()">»</button>';
 }
 
@@ -2901,7 +3142,7 @@ function loadSettings(){
     setVal('setMinDelay',s.min_reply_delay_sec||'30');
     setVal('setMaxDelay',s.max_reply_delay_sec||'120');
     setVal('setLocation',s.user_location||'');
-    setVal('setResume',s.resume_summary||DEFAULT_RESUME_SUMMARY);
+    setVal('setResume',s.resume_summary||'');
     setVal('setWechat',s.wechat_id||'');
     // 搜索关键词：优先使用 localStorage 中的值（用户最新输入）
     let skwSaved=false;

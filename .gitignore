@@ -1,10 +1,13 @@
 .boss_profile/
+# Local self-signed HTTPS certificates and private keys
+.boss_profile/tls/
 __pycache__/
 *.pyc
 .env
 **/.env
 .DS_Store
 reports/
+tmp/
 .claude/
 .boss_profile/
 .pytest_cache/
@@ -19,6 +22,7 @@ boss_data.db
 boss_page.html
 search_result.json
 NUL
+node_modules/
 
 # Secrets — never commit
 *.pem

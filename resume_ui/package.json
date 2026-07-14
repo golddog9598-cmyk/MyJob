@@ -1,0 +1,20 @@
+{
+  "name": "myjob-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "check": "vite build"
+  },
+  "dependencies": {
+    "@iconify/vue": "^5.0.0",
+    "vue": "^3.5.0",
+    "vuedraggable": "^4.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "vite": "^7.0.0"
+  }
+}

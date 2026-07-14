@@ -207,6 +207,103 @@ def init_db():
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name COLLATE NOCASE)")
     db.execute("CREATE INDEX IF NOT EXISTS idx_companies_fetched_at ON companies(fetched_at)")
+    # JD 定制简历 + 求职计划
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS resume_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '主简历',
+            content TEXT NOT NULL,
+            source_format TEXT NOT NULL DEFAULT 'markdown',
+            source_filename TEXT,
+            source_mime TEXT,
+            structured_json TEXT NOT NULL DEFAULT '{}',
+            template_id TEXT NOT NULL DEFAULT 'ats_classic',
+            parse_status TEXT NOT NULL DEFAULT 'ready',
+            parse_error TEXT,
+            is_default INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS tailored_resumes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            master_resume_id INTEGER REFERENCES resume_profiles(id) ON DELETE SET NULL,
+            application_id INTEGER REFERENCES applications(id) ON DELETE SET NULL,
+            job_url TEXT NOT NULL,
+            job_title TEXT,
+            company TEXT,
+            city TEXT,
+            content TEXT NOT NULL,
+            result_json TEXT NOT NULL DEFAULT '{}',
+            structured_json TEXT NOT NULL DEFAULT '{}',
+            template_id TEXT NOT NULL DEFAULT 'ats_classic',
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS job_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            keywords_json TEXT NOT NULL,
+            cities_json TEXT NOT NULL,
+            min_match_score INTEGER NOT NULL DEFAULT 60,
+            max_jobs_per_run INTEGER NOT NULL DEFAULT 10,
+            auto_tailor INTEGER NOT NULL DEFAULT 1,
+            apply_mode TEXT NOT NULL DEFAULT 'review',
+            auto_apply_confirmed INTEGER NOT NULL DEFAULT 0,
+            interval_hours INTEGER NOT NULL DEFAULT 24,
+            status TEXT NOT NULL DEFAULT 'paused',
+            last_run_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS campaign_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL REFERENCES job_campaigns(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'running',
+            found_count INTEGER NOT NULL DEFAULT 0,
+            matched_count INTEGER NOT NULL DEFAULT 0,
+            tailored_count INTEGER NOT NULL DEFAULT 0,
+            applied_count INTEGER NOT NULL DEFAULT 0,
+            error_text TEXT,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS campaign_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL REFERENCES job_campaigns(id) ON DELETE CASCADE,
+            run_id INTEGER REFERENCES campaign_runs(id) ON DELETE SET NULL,
+            application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+            match_score INTEGER NOT NULL DEFAULT 0,
+            match_detail_json TEXT NOT NULL DEFAULT '{}',
+            tailored_resume_id INTEGER REFERENCES tailored_resumes(id) ON DELETE SET NULL,
+            pipeline_status TEXT NOT NULL DEFAULT 'review',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(campaign_id, application_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tailored_job_url ON tailored_resumes(job_url);
+        CREATE INDEX IF NOT EXISTS idx_campaign_jobs_campaign ON campaign_jobs(campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_campaign_runs_campaign ON campaign_runs(campaign_id);
+    """)
+    for table, column, definition in (
+        ("resume_profiles", "source_filename", "TEXT"),
+        ("resume_profiles", "source_mime", "TEXT"),
+        ("resume_profiles", "structured_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("resume_profiles", "template_id", "TEXT NOT NULL DEFAULT 'ats_classic'"),
+        ("resume_profiles", "parse_status", "TEXT NOT NULL DEFAULT 'ready'"),
+        ("resume_profiles", "parse_error", "TEXT"),
+        ("tailored_resumes", "structured_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("tailored_resumes", "template_id", "TEXT NOT NULL DEFAULT 'ats_classic'"),
+    ):
+        try:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        except sqlite3.OperationalError:
+            pass
     # 默认设置
     defaults = {
         "greeting_template": "您好！看到贵司在招{job_title}，挺感兴趣的。PS：正在和你聊天的这个AI工具是我自己开发的——就当是我的技术名片了",
@@ -227,6 +324,7 @@ def init_db():
         "max_hr_inactive_days": "7",
         "filter_inactive_hr": "true",
         "dedup_company_by_default": "true",
+        "campaign_scheduler_enabled": "true",
     }
     for k, v in defaults.items():
         db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
@@ -591,16 +689,30 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
     return get_application(app_id)
 
 
-def list_applications(status: Optional[str] = None, limit: int = 50) -> List[dict]:
+def list_applications(status: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[dict]:
     db = get_db()
+    safe_limit = max(1, min(int(limit), 300))
+    safe_offset = max(0, int(offset))
     if status:
         rows = db.execute(
-            "SELECT * FROM applications WHERE status=? ORDER BY updated_at DESC LIMIT ?",
-            (status, limit),
+            "SELECT * FROM applications WHERE status=? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (status, safe_limit, safe_offset),
         ).fetchall()
     else:
-        rows = db.execute("SELECT * FROM applications ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = db.execute(
+            "SELECT * FROM applications ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (safe_limit, safe_offset),
+        ).fetchall()
     return _rows_to_list(rows)
+
+
+def count_applications(status: Optional[str] = None) -> int:
+    db = get_db()
+    if status:
+        row = db.execute("SELECT COUNT(*) AS cnt FROM applications WHERE status=?", (status,)).fetchone()
+    else:
+        row = db.execute("SELECT COUNT(*) AS cnt FROM applications").fetchone()
+    return int(row["cnt"] if row else 0)
 
 
 def update_application_status(app_id: int, status: str, greeting_text: Optional[str] = None):
@@ -1037,6 +1149,328 @@ def list_shortlists(limit: int = 100) -> list:
 def is_in_shortlist(job_url: str) -> bool:
     row = get_db().execute("SELECT COUNT(*) as cnt FROM shortlists WHERE job_url=?", (job_url,)).fetchone()
     return row["cnt"] > 0 if row else False
+
+
+# ══════════════════════════════════════
+#  Resume profiles / tailored resumes
+# ══════════════════════════════════════
+
+
+def get_master_resume() -> Optional[dict]:
+    row = get_db().execute(
+        "SELECT * FROM resume_profiles ORDER BY is_default DESC, updated_at DESC LIMIT 1"
+    ).fetchone()
+    item = _row_to_dict(row)
+    if item:
+        try:
+            item["structured"] = json.loads(item.pop("structured_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["structured"] = {}
+    return item
+
+
+def save_master_resume(
+    content: str,
+    name: str = "主简历",
+    source_format: str = "markdown",
+    source_filename: str = "",
+    source_mime: str = "",
+    structured: Optional[dict] = None,
+    template_id: Optional[str] = None,
+) -> dict:
+    content = (content or "").strip()
+    if not content:
+        raise ValueError("主简历内容不能为空")
+    if structured is None:
+        from resume_documents import parse_resume_structure
+
+        structured = parse_resume_structure(content)
+    db = get_db()
+    current = db.execute("SELECT id FROM resume_profiles WHERE is_default=1 ORDER BY id LIMIT 1").fetchone()
+    if current:
+        if not template_id:
+            selected = db.execute("SELECT template_id FROM resume_profiles WHERE id=?", (current["id"],)).fetchone()
+            template_id = (selected["template_id"] if selected else "") or "ats_classic"
+        db.execute(
+            """UPDATE resume_profiles SET name=?, content=?, source_format=?,source_filename=?,source_mime=?,
+               structured_json=?,template_id=?,parse_status='ready',parse_error=NULL,
+               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (
+                name or "主简历",
+                content,
+                source_format or "markdown",
+                source_filename or "",
+                source_mime or "",
+                json.dumps(structured, ensure_ascii=False),
+                template_id,
+                current["id"],
+            ),
+        )
+        resume_id = current["id"]
+    else:
+        cur = db.execute(
+            """INSERT INTO resume_profiles
+               (name,content,source_format,source_filename,source_mime,structured_json,template_id,parse_status,is_default)
+               VALUES(?,?,?,?,?,?,?,'ready',1)""",
+            (
+                name or "主简历",
+                content,
+                source_format or "markdown",
+                source_filename or "",
+                source_mime or "",
+                json.dumps(structured, ensure_ascii=False),
+                template_id or "ats_classic",
+            ),
+        )
+        resume_id = cur.lastrowid
+    # 与旧版设置兼容：AI 回复和岗位分析继续能读取简历摘要。
+    db.execute(
+        """INSERT INTO settings(key,value,updated_at) VALUES('resume_summary',?,CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP""",
+        (content,),
+    )
+    db.commit()
+    return get_master_resume()
+
+
+def set_master_resume_template(template_id: str) -> Optional[dict]:
+    db = get_db()
+    row = db.execute("SELECT id FROM resume_profiles WHERE is_default=1 ORDER BY id LIMIT 1").fetchone()
+    if not row:
+        return None
+    db.execute(
+        "UPDATE resume_profiles SET template_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (template_id, row["id"]),
+    )
+    db.commit()
+    return get_master_resume()
+
+
+def save_tailored_resume(application: dict, master_resume_id: int, result: dict) -> dict:
+    db = get_db()
+    from resume_documents import parse_resume_structure
+
+    content = (result.get("resume_markdown") or "").strip()
+    master = db.execute("SELECT template_id FROM resume_profiles WHERE id=?", (master_resume_id,)).fetchone()
+    template_id = (master["template_id"] if master else "") or "ats_classic"
+    structured = parse_resume_structure(content)
+    cur = db.execute(
+        """INSERT INTO tailored_resumes
+           (master_resume_id,application_id,job_url,job_title,company,city,content,result_json,
+            structured_json,template_id,status)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            master_resume_id,
+            application.get("id"),
+            application.get("job_url") or application.get("url") or "",
+            application.get("job_title") or application.get("title") or "",
+            application.get("company") or "",
+            application.get("city") or "",
+            content,
+            json.dumps(result, ensure_ascii=False),
+            json.dumps(structured, ensure_ascii=False),
+            template_id,
+            result.get("status") or "draft",
+        ),
+    )
+    db.commit()
+    return get_tailored_resume(cur.lastrowid)
+
+
+def get_tailored_resume(resume_id: int) -> Optional[dict]:
+    item = _row_to_dict(get_db().execute("SELECT * FROM tailored_resumes WHERE id=?", (resume_id,)).fetchone())
+    if item:
+        try:
+            item["result"] = json.loads(item.pop("result_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["result"] = {}
+        try:
+            item["structured"] = json.loads(item.pop("structured_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["structured"] = {}
+    return item
+
+
+def list_tailored_resumes(job_url: str = "", limit: int = 100) -> List[dict]:
+    db = get_db()
+    if job_url:
+        rows = db.execute(
+            "SELECT * FROM tailored_resumes WHERE job_url=? ORDER BY id DESC LIMIT ?", (job_url, limit)
+        ).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM tailored_resumes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["result"] = json.loads(item.pop("result_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["result"] = {}
+        try:
+            item["structured"] = json.loads(item.pop("structured_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["structured"] = {}
+        items.append(item)
+    return items
+
+
+def update_tailored_resume_status(resume_id: int, status: str) -> Optional[dict]:
+    if status not in {"draft", "needs_review", "approved", "used"}:
+        raise ValueError("无效的定制简历状态")
+    db = get_db()
+    db.execute(
+        "UPDATE tailored_resumes SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, resume_id)
+    )
+    db.commit()
+    return get_tailored_resume(resume_id)
+
+
+# ══════════════════════════════════════
+#  Job campaigns
+# ══════════════════════════════════════
+
+
+def _campaign_row(row) -> Optional[dict]:
+    item = _row_to_dict(row)
+    if not item:
+        return None
+    item["keywords"] = json.loads(item.pop("keywords_json") or "[]")
+    item["cities"] = json.loads(item.pop("cities_json") or "[]")
+    item["auto_tailor"] = bool(item["auto_tailor"])
+    item["auto_apply_confirmed"] = bool(item["auto_apply_confirmed"])
+    return item
+
+
+def create_job_campaign(config: dict) -> dict:
+    db = get_db()
+    cur = db.execute(
+        """INSERT INTO job_campaigns
+           (name,keywords_json,cities_json,min_match_score,max_jobs_per_run,auto_tailor,
+            apply_mode,auto_apply_confirmed,interval_hours,status)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            config.get("name") or "求职计划",
+            json.dumps(config["keywords"], ensure_ascii=False),
+            json.dumps(config["cities"], ensure_ascii=False),
+            config["min_match_score"],
+            config["max_jobs_per_run"],
+            1 if config.get("auto_tailor") else 0,
+            config["apply_mode"],
+            1 if config.get("auto_apply_confirmed") else 0,
+            max(1, min(168, int(config.get("interval_hours", 24)))),
+            config.get("status") if config.get("status") in {"active", "paused"} else "paused",
+        ),
+    )
+    db.commit()
+    return get_job_campaign(cur.lastrowid)
+
+
+def get_job_campaign(campaign_id: int) -> Optional[dict]:
+    return _campaign_row(get_db().execute("SELECT * FROM job_campaigns WHERE id=?", (campaign_id,)).fetchone())
+
+
+def list_job_campaigns() -> List[dict]:
+    return [_campaign_row(row) for row in get_db().execute("SELECT * FROM job_campaigns ORDER BY id DESC").fetchall()]
+
+
+def set_job_campaign_status(campaign_id: int, status: str) -> Optional[dict]:
+    if status not in {"active", "paused"}:
+        raise ValueError("status 只能是 active 或 paused")
+    db = get_db()
+    db.execute("UPDATE job_campaigns SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, campaign_id))
+    db.commit()
+    return get_job_campaign(campaign_id)
+
+
+def list_due_job_campaigns() -> List[dict]:
+    rows = get_db().execute(
+        """SELECT * FROM job_campaigns WHERE status='active' AND
+           (last_run_at IS NULL OR datetime(last_run_at, '+' || interval_hours || ' hours') <= datetime('now','localtime'))
+           ORDER BY COALESCE(last_run_at,'1970-01-01') ASC"""
+    ).fetchall()
+    return [_campaign_row(row) for row in rows]
+
+
+def start_campaign_run(campaign_id: int) -> int:
+    db = get_db()
+    cur = db.execute("INSERT INTO campaign_runs(campaign_id,status) VALUES(?,'running')", (campaign_id,))
+    db.execute("UPDATE job_campaigns SET last_run_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?", (campaign_id,))
+    db.commit()
+    return cur.lastrowid
+
+
+def finish_campaign_run(run_id: int, status: str = "completed", **counts) -> dict:
+    db = get_db()
+    db.execute(
+        """UPDATE campaign_runs SET status=?,found_count=?,matched_count=?,tailored_count=?,
+           applied_count=?,error_text=?,finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+        (
+            status,
+            int(counts.get("found_count", 0)),
+            int(counts.get("matched_count", 0)),
+            int(counts.get("tailored_count", 0)),
+            int(counts.get("applied_count", 0)),
+            str(counts.get("error_text") or "")[:2000],
+            run_id,
+        ),
+    )
+    db.commit()
+    return _row_to_dict(db.execute("SELECT * FROM campaign_runs WHERE id=?", (run_id,)).fetchone())
+
+
+def upsert_campaign_job(campaign_id: int, run_id: int, application_id: int, match: dict, tailored_resume_id=None):
+    db = get_db()
+    db.execute(
+        """INSERT INTO campaign_jobs
+           (campaign_id,run_id,application_id,match_score,match_detail_json,tailored_resume_id,pipeline_status)
+           VALUES(?,?,?,?,?,?, 'review')
+           ON CONFLICT(campaign_id,application_id) DO UPDATE SET
+             run_id=excluded.run_id,match_score=excluded.match_score,
+             match_detail_json=excluded.match_detail_json,
+             tailored_resume_id=COALESCE(excluded.tailored_resume_id,campaign_jobs.tailored_resume_id),
+             updated_at=CURRENT_TIMESTAMP""",
+        (
+            campaign_id,
+            run_id,
+            application_id,
+            int(match.get("score", 0)),
+            json.dumps(match, ensure_ascii=False),
+            tailored_resume_id,
+        ),
+    )
+    db.commit()
+
+
+def set_campaign_job_status(campaign_id: int, application_id: int, status: str, tailored_resume_id=None):
+    db = get_db()
+    db.execute(
+        """UPDATE campaign_jobs SET pipeline_status=?,tailored_resume_id=COALESCE(?,tailored_resume_id),
+           updated_at=CURRENT_TIMESTAMP WHERE campaign_id=? AND application_id=?""",
+        (status, tailored_resume_id, campaign_id, application_id),
+    )
+    db.commit()
+
+
+def list_campaign_jobs(campaign_id: int) -> List[dict]:
+    rows = get_db().execute(
+        """SELECT cj.*,a.job_title,a.company,a.salary,a.job_url,a.city,a.status AS application_status,
+                  tr.status AS resume_status,c.interest_level,c.last_message_from,c.last_message_at
+           FROM campaign_jobs cj
+           JOIN applications a ON a.id=cj.application_id
+           LEFT JOIN tailored_resumes tr ON tr.id=cj.tailored_resume_id
+           LEFT JOIN conversations c ON c.application_id=a.id AND c.status!='closed'
+           WHERE cj.campaign_id=? ORDER BY cj.match_score DESC,cj.id DESC""",
+        (campaign_id,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["match_detail"] = json.loads(item.pop("match_detail_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["match_detail"] = {}
+        items.append(item)
+    return items
 
 
 def clear_all_applications() -> int:

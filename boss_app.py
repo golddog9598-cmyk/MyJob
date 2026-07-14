@@ -8,6 +8,7 @@ BOSS直聘自动化控制台 —— FastAPI 后端
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
 import sys
@@ -26,12 +27,14 @@ def _ts_print(*args, **kwargs):
     _original_print(f"[{ts}]", *args, **kwargs)
 builtins.print = _ts_print
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app_auth import AUTH_COOKIE_NAME, AuthManager, LoginRateLimiter
+from myjob_tls import ensure_local_certificate
 from boss_automation import BossAutomation
 from boss_state import (
     add_application,
@@ -62,6 +65,7 @@ from boss_state import (
     clear_all_applications,
     clear_all_conversations,
     get_total_application_count,
+    count_applications,
     count_applied_applications,
     get_daily_limit,
     list_applications,
@@ -69,35 +73,133 @@ from boss_state import (
     remove_from_shortlist,
     list_shortlists,
     is_in_shortlist,
+    get_master_resume,
+    save_master_resume,
+    save_tailored_resume,
+    get_tailored_resume,
+    list_tailored_resumes,
+    update_tailored_resume_status,
+    set_master_resume_template,
+    create_job_campaign,
+    get_job_campaign,
+    list_job_campaigns,
+    set_job_campaign_status,
+    list_due_job_campaigns,
+    start_campaign_run,
+    finish_campaign_run,
+    upsert_campaign_job,
+    set_campaign_job_status,
+    list_campaign_jobs,
 )
 from boss_replier import generate_greeting
+from job_campaign import pipeline_status, rank_jobs, validate_campaign_config
+from resume_tailor import tailor_resume
+from resume_documents import (
+    SUPPORTED_EXTENSIONS,
+    build_resume_bytes,
+    extract_resume_text,
+    get_template,
+    list_templates,
+    normalize_resume_structure,
+    parse_resume_structure,
+    structured_to_markdown,
+    template_preview_html,
+)
 
 # ── FastAPI 应用 ──
-app = FastAPI(title="BOSS直聘自动化控制台", version="1.0.0")
+_docs_enabled = (
+    os.getenv("MYJOB_ENABLE_DOCS") or os.getenv("LAKEJOB_ENABLE_DOCS", "false")
+).lower() == "true"
+app = FastAPI(
+    title="MyJob",
+    version="V0.0.1",
+    docs_url="/api/docs" if _docs_enabled else None,
+    redoc_url=None,
+    openapi_url="/api/openapi.json" if _docs_enabled else None,
+)
+
+_default_origins = "https://127.0.0.1:5173,https://localhost:5173"
+_allowed_origins = [
+    origin.strip()
+    for origin in (
+        os.getenv("MYJOB_CORS_ORIGINS")
+        or os.getenv("LAKEJOB_CORS_ORIGINS")
+        or _default_origins
+    ).split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir), html=False), name="static")
 
+auth_manager = AuthManager(
+    Path(
+        os.getenv("MYJOB_AUTH_FILE")
+        or os.getenv("LAKEJOB_AUTH_FILE")
+        or str(Path(__file__).parent / ".boss_profile" / "auth.db")
+    ),
+    session_hours=int(
+        os.getenv("MYJOB_SESSION_HOURS") or os.getenv("LAKEJOB_SESSION_HOURS", "12")
+    ),
+    legacy_path=Path(__file__).parent / ".boss_profile" / "auth.json",
+)
+login_limiter = LoginRateLimiter()
+
+_PUBLIC_API_PATHS = {
+    "/api/auth/status",
+    "/api/auth/register",
+    "/api/auth/login",
+    "/api/admin/login",
+    "/api/auth/logout",
+    "/api/health",
+}
+
+
+@app.middleware("http")
+async def authenticated_api(request: Request, call_next):
+    """Protect business APIs while keeping the SPA and login endpoints public."""
+    path = request.url.path.rstrip("/") or "/"
+    if request.method != "OPTIONS" and path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
+        token = request.cookies.get(AUTH_COOKIE_NAME, "")
+        session = auth_manager.verify_token(token)
+        if not session:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "登录已失效，请重新登录", "code": "AUTH_REQUIRED"},
+            )
+        request.state.user = session
+
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return response
+
 # ── 全局状态 ──
 automation: Optional[BossAutomation] = None
 monitor_task: Optional[asyncio.Task] = None
+campaign_scheduler_task: Optional[asyncio.Task] = None
 ws_clients: List[WebSocket] = []
 monitor_paused: bool = False
 browser_sync_lock: Optional[asyncio.Lock] = None
+_summary_cache = {"expires_at": 0.0, "payload": None}
 
 
 @app.on_event("startup")
 async def on_startup():
-    global automation, monitor_task, browser_sync_lock
+    global automation, monitor_task, campaign_scheduler_task, browser_sync_lock
     browser_sync_lock = asyncio.Lock()
     # 清理旧垃圾会话 + 合并同名重复会话
     try:
@@ -129,6 +231,8 @@ async def on_startup():
         pass
     if automation is not None and automation.page is not None:
         monitor_task = asyncio.create_task(chat_monitor_loop())
+    if campaign_scheduler_task is None or campaign_scheduler_task.done():
+        campaign_scheduler_task = asyncio.create_task(campaign_scheduler_loop())
 
 
 # Playwright 同步 API 要求所有操作在同一线程 —— 用单线程池保证
@@ -1046,6 +1150,58 @@ class OptimizeResumeRequest(BaseModel):
     force_refresh: Optional[bool] = False
 
 
+class MasterResumeUpdate(BaseModel):
+    name: str = "主简历"
+    content: str
+    source_format: str = "markdown"
+
+
+class StructuredResumeUpdate(BaseModel):
+    name: str = "主简历"
+    template_id: str = "ats_classic"
+    structured: dict
+
+
+class ResumeTemplateUpdate(BaseModel):
+    template_id: str
+
+
+class ResumeCreateRequest(BaseModel):
+    name: str = "主简历"
+    template_id: str = "ats_classic"
+    content: str = ""
+
+
+class TailorResumeRequest(BaseModel):
+    application_id: Optional[int] = None
+    job_url: str = ""
+    job_title: str = ""
+    company: str = ""
+    city: str = ""
+    description: str = ""
+
+
+class TailoredResumeStatusUpdate(BaseModel):
+    status: str
+
+
+class CampaignCreateRequest(BaseModel):
+    name: str = "求职计划"
+    keywords: List[str]
+    cities: List[str]
+    min_match_score: int = 60
+    max_jobs_per_run: int = 10
+    auto_tailor: bool = True
+    apply_mode: str = "review"
+    auto_apply_confirmed: bool = False
+    interval_hours: int = 24
+    status: str = "paused"
+
+
+class CampaignStatusUpdate(BaseModel):
+    status: str
+
+
 class ChatSuggestionRequest(BaseModel):
     job_url: str
     job_title: Optional[str] = ""
@@ -1088,6 +1244,230 @@ class SettingsUpdate(BaseModel):
     filter_inactive_hr: Optional[str] = None  # 跳过不活跃HR开关
     dedup_company_by_default: Optional[str] = None  # 公司去重开关
     max_hr_inactive_days: Optional[str] = None  # HR不活跃天数阈值
+    campaign_scheduler_enabled: Optional[str] = None  # 求职计划定时运行开关
+
+
+class AuthCredentials(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminCreateRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegistrationToggleRequest(BaseModel):
+    enabled: bool
+
+
+class UserStatusRequest(BaseModel):
+    active: bool
+
+
+def _session_response(request: Request, payload: dict, token: str, status_code: int = 200) -> JSONResponse:
+    response = JSONResponse(status_code=status_code, content=payload)
+    secure_env = (
+        os.getenv("MYJOB_SECURE_COOKIE") or os.getenv("LAKEJOB_SECURE_COOKIE", "")
+    ).strip().lower()
+    secure_cookie = secure_env == "true" if secure_env else request.url.scheme == "https"
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=auth_manager.session_seconds,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _public_user(user: Optional[dict]) -> Optional[dict]:
+    if not user:
+        return None
+    user_id = user.get("user_id", user.get("id"))
+    return {
+        "id": user_id,
+        "user_id": user_id,
+        "username": user.get("username", user.get("sub")),
+        "role": user.get("role", "user"),
+        "is_active": bool(user.get("is_active", True)),
+        "must_change_password": bool(user.get("must_change_password", False)),
+    }
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    session = auth_manager.verify_token(request.cookies.get(AUTH_COOKIE_NAME, ""))
+    return {
+        "configured": True,
+        "registration_enabled": auth_manager.registration_enabled,
+        "authenticated": bool(session),
+        "user": _public_user(session),
+    }
+
+
+def _client_key(request: Request, username: str, portal: str) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{portal}:{host}:{str(username or '').strip().casefold()}"
+
+
+def _login(req: AuthCredentials, request: Request, admin_portal: bool = False):
+    client_key = _client_key(request, req.username, "admin" if admin_portal else "user")
+    retry_after = login_limiter.retry_after(client_key)
+    if retry_after:
+        response = JSONResponse(
+            status_code=429,
+            content={"detail": f"登录尝试过多，请在 {retry_after} 秒后重试"},
+        )
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+    user = auth_manager.authenticate(req.username, req.password)
+    allowed_roles = {"admin", "superadmin"} if admin_portal else {"user"}
+    if not user or user["role"] not in allowed_roles:
+        login_limiter.failure(client_key)
+        raise HTTPException(status_code=401, detail="用户名或密码不正确")
+    login_limiter.success(client_key)
+    token = auth_manager.issue_token(
+        user,
+        ip=request.client.host if request.client else "",
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    return _session_response(request, {"authenticated": True, "user": user}, token)
+
+
+@app.post("/api/auth/register")
+def auth_register(req: AuthCredentials, request: Request):
+    try:
+        user = auth_manager.register(req.username, req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    token = auth_manager.issue_token(
+        user,
+        ip=request.client.host if request.client else "",
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    return _session_response(
+        request,
+        {"authenticated": True, "user": user},
+        token,
+        status_code=201,
+    )
+
+
+@app.post("/api/auth/login")
+def auth_login(req: AuthCredentials, request: Request):
+    return _login(req, request)
+
+
+@app.post("/api/admin/login")
+def admin_login(req: AuthCredentials, request: Request):
+    return _login(req, request, admin_portal=True)
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request):
+    return {"authenticated": True, "user": _public_user(request.state.user)}
+
+
+@app.post("/api/auth/heartbeat")
+def auth_heartbeat(request: Request):
+    try:
+        return auth_manager.heartbeat(request.state.user["sid"])
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/change-password")
+def auth_change_password(req: PasswordChangeRequest, request: Request):
+    try:
+        user = auth_manager.change_password(
+            request.state.user["user_id"], req.current_password, req.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    token = auth_manager.issue_token(
+        user,
+        ip=request.client.host if request.client else "",
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    return _session_response(
+        request,
+        {"status": "ok", "user": user},
+        token,
+    )
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    session = auth_manager.verify_token(request.cookies.get(AUTH_COOKIE_NAME, ""))
+    if session:
+        auth_manager.end_session(session["sid"])
+    response = JSONResponse(content={"authenticated": False})
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _require_admin(request: Request, superadmin: bool = False) -> dict:
+    user = request.state.user
+    allowed = {"superadmin"} if superadmin else {"admin", "superadmin"}
+    if user.get("role") not in allowed:
+        raise HTTPException(status_code=403, detail="无权访问管理员后台")
+    if user.get("must_change_password"):
+        raise HTTPException(status_code=403, detail="请先修改默认密码")
+    return user
+
+
+@app.get("/api/admin/overview")
+def admin_overview(request: Request, days: int = 7):
+    _require_admin(request)
+    return auth_manager.admin_overview(days)
+
+
+@app.get("/api/admin/users")
+def admin_users(request: Request, limit: int = 100):
+    _require_admin(request)
+    return {"users": auth_manager.list_users(limit)}
+
+
+@app.post("/api/admin/accounts")
+def admin_create_account(req: AdminCreateRequest, request: Request):
+    _require_admin(request, superadmin=True)
+    try:
+        user = auth_manager.create_admin(req.username, req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", "user": user}
+
+
+@app.put("/api/admin/registration")
+def admin_registration(req: RegistrationToggleRequest, request: Request):
+    _require_admin(request)
+    auth_manager.set_registration_enabled(req.enabled)
+    return {"registration_enabled": auth_manager.registration_enabled}
+
+
+@app.put("/api/admin/users/{user_id}/status")
+def admin_user_status(user_id: int, req: UserStatusRequest, request: Request):
+    actor = _require_admin(request)
+    target = auth_manager.get_user(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target["role"] in {"admin", "superadmin"} and actor["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="只有超级管理员可以管理管理员账号")
+    try:
+        user = auth_manager.set_user_active(actor["user_id"], user_id, req.active)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "ok", "user": user}
 
 
 # ══════════════════════════════════════
@@ -1096,9 +1476,15 @@ class SettingsUpdate(BaseModel):
 
 
 async def broadcast_ws(message: dict):
+    _summary_cache["expires_at"] = 0.0
     dead = []
     for ws in ws_clients:
         try:
+            token = getattr(ws.state, "auth_token", "")
+            if not auth_manager.verify_token(token):
+                await ws.close(code=4401, reason="authentication required")
+                dead.append(ws)
+                continue
             await ws.send_json(message)
         except Exception:
             dead.append(ws)
@@ -1112,16 +1498,36 @@ async def broadcast_ws(message: dict):
 # ══════════════════════════════════════
 
 
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/", include_in_schema=False)
+def legacy_admin_redirect():
+    return RedirectResponse(url="/MyJobaAdmin", status_code=307)
+
+
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/login/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/register", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/register/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/app", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/app/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/docs/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/changelog", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/changelog/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/MyJobaAdmin", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/MyJobaAdmin/", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/", response_class=HTMLResponse)
 def index():
-    html_path = static_dir / "dashboard.html"
+    html_path = static_dir / "app" / "index.html"
+    if not html_path.exists():
+        html_path = static_dir / "dashboard.html"
     if html_path.exists():
         resp = HTMLResponse(content=html_path.read_text(encoding="utf-8"))
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
         return resp
-    return HTMLResponse(content="<h1>BOSS直聘自动化控制台</h1><p>dashboard.html 未找到</p>")
+    return HTMLResponse(content="<h1>BOSS直聘自动化控制台</h1><p>请先构建 Vue 前端</p>")
 
 
 # ══════════════════════════════════════
@@ -1149,8 +1555,8 @@ def get_stats():
     today = get_daily_stats()
     return {
         "today_applications": get_today_application_count(),
-        # 待投递：用 list_applications 同步统计，保持和 /api/jobs?status=pending 一致
-        "pending": len(list_applications(status="pending", limit=10000)),
+        # 直接 COUNT，避免为了一个数字读取并反序列化大量岗位记录。
+        "pending": count_applications("pending"),
         # 搜索页 funnel + 聊天页「收到回复」卡片：最近24小时 HR 回复数
         "replied": count_hours_replied_in_range(24),
         # 聊天页「面试/微信」卡片 + 搜索页 funnel：interest_level='high' 的会话数
@@ -1166,6 +1572,29 @@ def get_stats():
         "applied": count_applied_applications(),
         "daily_stats": today,
     }
+
+
+@app.get("/api/dashboard/summary")
+def dashboard_summary():
+    """A short-lived aggregate for the Vue workspace overview.
+
+    The client uses WebSocket invalidation plus a slow visibility-aware refresh.
+    A five-second cache absorbs duplicate tab mounts and reconnects on small hosts.
+    """
+    now = time.monotonic()
+    cached = _summary_cache.get("payload")
+    if cached is not None and now < float(_summary_cache.get("expires_at") or 0):
+        return cached
+    payload = {
+        "status": get_status(),
+        "stats": get_stats(),
+        "recent_jobs": list_applications(limit=6),
+        "recent_conversations": list_active_conversations()[:5],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    _summary_cache["payload"] = payload
+    _summary_cache["expires_at"] = now + 5
+    return payload
 
 
 @app.get("/api/doctor")
@@ -1198,14 +1627,21 @@ def doctor():
 
 @app.post("/api/system/start")
 async def start_automation():
-    global automation, monitor_task
+    global automation
     if automation is not None and automation.page is not None:
         return {"status": "already_started"}
 
     # 在后台线程启动浏览器，避免阻塞事件循环
     def _do_start():
         a = BossAutomation(headless=False)
-        a.start()
+        try:
+            a.start()
+        except Exception:
+            try:
+                a.close()
+            except Exception:
+                pass
+            raise
         return a
 
     try:
@@ -1218,8 +1654,6 @@ async def start_automation():
         automation = None
         return {"status": "error", "message": "浏览器启动后页面为空，请重试"}
 
-    if monitor_task is None or monitor_task.done():
-        monitor_task = asyncio.create_task(chat_monitor_loop())
     await broadcast_ws({"type": "system", "event": "started"})
     return {"status": "started"}
 
@@ -1244,10 +1678,100 @@ async def stop_automation():
     return {"status": "stopped"}
 
 
+@app.post("/api/system/check-login")
+async def check_login_status():
+    """主动验证 BOSS 登录态；未登录属于正常状态，始终返回清晰结果。"""
+    global monitor_task, monitor_paused
+    if not automation or automation.page is None:
+        return {
+            "browser_running": False,
+            "logged_in": False,
+            "message": "浏览器尚未启动，请先点击“启动浏览器”",
+        }
+
+    try:
+        logged_in = bool(await _run_pw(automation.check_login_verified))
+    except Exception as exc:
+        return {
+            "browser_running": True,
+            "logged_in": False,
+            "message": f"登录状态检查失败：{exc}",
+        }
+
+    if logged_in:
+        monitor_paused = False
+        try:
+            await _run_pw(automation._save_state)
+        except Exception:
+            pass
+        if monitor_task is None or monitor_task.done():
+            monitor_task = asyncio.create_task(chat_monitor_loop())
+        message = "BOSS 已登录，可以开始搜索和投递"
+    else:
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
+            monitor_task = None
+        message = "请登录"
+
+    try:
+        current_url = await _run_pw(lambda: automation.page.url)
+    except Exception:
+        current_url = ""
+    await broadcast_ws({"type": "system", "event": "login_checked", "logged_in": logged_in})
+    return {
+        "browser_running": True,
+        "logged_in": logged_in,
+        "message": message,
+        "url": current_url,
+    }
+
+
+@app.post("/api/system/logout")
+async def logout_boss():
+    """清除 BOSS 会话但保留浏览器和后台服务运行。"""
+    global monitor_task, monitor_paused
+    if not automation or automation.page is None:
+        return {
+            "status": "error",
+            "browser_running": False,
+            "logged_in": False,
+            "message": "浏览器尚未启动，当前无需登出",
+        }
+
+    if monitor_task and not monitor_task.done():
+        monitor_task.cancel()
+        monitor_task = None
+    monitor_paused = True
+
+    try:
+        logged_out = bool(await _run_pw(automation.logout_session))
+    except Exception as exc:
+        logged_out = False
+        error_message = str(exc)
+    else:
+        error_message = ""
+
+    if not logged_out:
+        return {
+            "status": "error",
+            "browser_running": True,
+            "logged_in": True,
+            "message": f"登出失败：{error_message or '未能完全清除登录状态'}",
+        }
+
+    await broadcast_ws({"type": "system", "event": "logged_out", "logged_in": False})
+    return {
+        "status": "ok",
+        "browser_running": True,
+        "logged_in": False,
+        "message": "已退出 BOSS 登录，浏览器仍保持运行",
+    }
+
+
 @app.post("/api/system/relogin")
 async def relogin():
     """重新登录 BOSS直聘。会打开浏览器让用户扫码。"""
-    global automation, monitor_task
+    global automation, monitor_task, monitor_paused
     if monitor_task and not monitor_task.done():
         monitor_task.cancel()
         monitor_task = None
@@ -1275,6 +1799,7 @@ async def relogin():
         automation = None
         return {"status": "error", "message": "登录后页面异常，请重试"}
 
+    monitor_paused = False
     if monitor_task is None or monitor_task.done():
         monitor_task = asyncio.create_task(chat_monitor_loop())
     await broadcast_ws({"type": "system", "event": "relogin_ok"})
@@ -1423,9 +1948,16 @@ async def selectors_status():
 
 
 @app.get("/api/jobs")
-def list_jobs(status: Optional[str] = None, limit: int = 100):
-    jobs = list_applications(status, limit)
-    return {"jobs": jobs, "total": len(jobs)}
+def list_jobs(status: Optional[str] = None, limit: int = 50, offset: int = 0):
+    safe_limit = max(1, min(int(limit), 100))
+    safe_offset = max(0, int(offset))
+    jobs = list_applications(status, safe_limit, safe_offset)
+    return {
+        "jobs": jobs,
+        "total": count_applications(status),
+        "limit": safe_limit,
+        "offset": safe_offset,
+    }
 
 
 @app.post("/api/jobs/search")
@@ -1530,6 +2062,11 @@ async def search_jobs(req: SearchRequest):
                 continue
             filtered2.append(j)
         jobs = filtered2
+
+        # SearchRequest.limit 是公开 API/CLI 契约。抓取器可能滚动加载数百条，
+        # 但这里只入库和返回用户要求的数量，避免一次试搜污染整个岗位列表。
+        result_limit = max(1, min(int(req.limit or 60), 300))
+        jobs = jobs[:result_limit]
 
         saved_ids = []
         result_jobs = []
@@ -1892,6 +2429,455 @@ async def optimize_resume(req: OptimizeResumeRequest):
         return result
     except Exception as e:
         return {"error": f"AI优化失败: {e}", "one_line": "请检查AI配置", "optimize_tips": [], "action_items": []}
+
+
+# ══════════════════════════════════════
+#  可使用的 JD 定制简历
+# ══════════════════════════════════════
+
+
+@app.get("/api/resume-templates")
+def read_resume_templates():
+    templates = list_templates()
+    return {
+        "templates": templates,
+        "total": len(templates),
+        "categories": list(dict.fromkeys(item["category"] for item in templates)),
+    }
+
+
+@app.get("/api/resume-templates/{template_id}/preview", response_class=HTMLResponse)
+def preview_resume_template(template_id: str, sample: bool = False):
+    try:
+        structured = None
+        if not sample:
+            resume = get_master_resume()
+            if resume:
+                structured = resume.get("structured") or parse_resume_structure(resume.get("content") or "")
+        return HTMLResponse(template_preview_html(template_id, structured))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/resumes/master")
+def read_master_resume():
+    resume = get_master_resume()
+    if not resume:
+        legacy = get_setting("resume_summary", "")
+        if legacy.strip():
+            resume = save_master_resume(legacy)
+    return {"resume": resume}
+
+
+@app.put("/api/resumes/master")
+def update_master_resume(req: MasterResumeUpdate):
+    try:
+        current = get_master_resume() or {}
+        resume = save_master_resume(
+            req.content,
+            req.name,
+            req.source_format,
+            template_id=current.get("template_id") or "ats_classic",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"resume": resume}
+
+
+@app.put("/api/resumes/master/structured")
+def update_structured_master_resume(req: StructuredResumeUpdate):
+    try:
+        get_template(req.template_id)
+        structured = normalize_resume_structure(req.structured)
+        content = structured_to_markdown(structured)
+        current = get_master_resume() or {}
+        resume = save_master_resume(
+            content,
+            req.name.strip() or current.get("name") or "主简历",
+            "structured-v2",
+            source_filename=current.get("source_filename") or "",
+            source_mime=current.get("source_mime") or "",
+            structured=structured,
+            template_id=req.template_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"resume": resume}
+
+
+@app.post("/api/resumes/upload")
+async def upload_master_resume(file: UploadFile = File(...), template_id: str = Form("ats_classic")):
+    try:
+        get_template(template_id)
+        payload = await file.read()
+        text, source_format = await asyncio.to_thread(extract_resume_text, file.filename or "resume.txt", payload)
+        structured = parse_resume_structure(text)
+        markdown = structured_to_markdown(structured)
+        resume = save_master_resume(
+            markdown,
+            name=Path(file.filename or "主简历").stem or "主简历",
+            source_format=source_format,
+            source_filename=file.filename or "",
+            source_mime=file.content_type or "",
+            structured=structured,
+            template_id=template_id,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"简历解析失败: {exc}") from exc
+    return {
+        "resume": resume,
+        "parse": {
+            "status": "ready",
+            "source_format": source_format,
+            "characters": len(text),
+            "sections": len(structured.get("sections") or []),
+            "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
+        },
+    }
+
+
+@app.post("/api/resumes/create-from-template")
+def create_resume_from_template(req: ResumeCreateRequest):
+    try:
+        get_template(req.template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    content = req.content.strip() or f"""# {req.name or '姓名'}
+目标岗位 | 手机 | 邮箱 | 城市
+
+## 个人简介
+- 请填写与目标岗位相关的真实优势。
+
+## 专业技能
+- 请填写技能。
+
+## 工作经历
+- 公司 | 职位 | 时间
+- 请填写职责与可核实成果。
+
+## 项目经历
+- 项目名称 | 角色 | 时间
+- 请填写动作、产物和结果。
+
+## 教育经历
+- 学校 | 专业 | 学历 | 时间"""
+    structured = parse_resume_structure(content)
+    resume = save_master_resume(
+        structured_to_markdown(structured),
+        req.name or "主简历",
+        "markdown",
+        structured=structured,
+        template_id=req.template_id,
+    )
+    return {"resume": resume}
+
+
+@app.put("/api/resumes/master/template")
+def update_master_resume_template(req: ResumeTemplateUpdate):
+    try:
+        get_template(req.template_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    resume = set_master_resume_template(req.template_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="请先上传或创建主简历")
+    return {"resume": resume}
+
+
+@app.get("/api/resumes/master/export")
+def export_master_resume(format: str = "docx", template_id: str = ""):
+    resume = get_master_resume()
+    if not resume:
+        raise HTTPException(status_code=404, detail="请先上传或创建主简历")
+    chosen = template_id or resume.get("template_id") or "ats_classic"
+    try:
+        get_template(chosen)
+        structured = resume.get("structured") or parse_resume_structure(resume["content"])
+        payload, media_type, suffix = build_resume_bytes(structured, chosen, format)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        payload,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="master-resume-{chosen}.{suffix}"'},
+    )
+
+
+def _resolve_tailor_application(req: TailorResumeRequest) -> dict:
+    application = get_application(req.application_id) if req.application_id else None
+    if not application and req.job_url:
+        application = get_application_by_url(req.job_url)
+    if application:
+        updates = {
+            "title": req.job_title,
+            "company": req.company,
+            "city": req.city,
+            "description": req.description,
+        }
+        if any(updates.values()):
+            application = update_application_from_job(application["id"], updates) or application
+        return application
+    if not req.job_url:
+        raise HTTPException(status_code=422, detail="application_id 或 job_url 至少填写一个")
+    job = {
+        "url": req.job_url,
+        "title": req.job_title,
+        "company": req.company,
+        "city": req.city,
+        "description": req.description,
+    }
+    application_id = add_application(job)
+    application = get_application(application_id) if application_id else get_application_by_url(req.job_url)
+    if not application:
+        raise HTTPException(status_code=422, detail="无法保存岗位，请检查 job_url")
+    return application
+
+
+async def _generate_tailored_resume(application: dict, master: Optional[dict] = None) -> dict:
+    master = master or get_master_resume()
+    if not master:
+        legacy = get_setting("resume_summary", "")
+        if legacy.strip():
+            master = save_master_resume(legacy)
+    if not master:
+        raise HTTPException(status_code=422, detail="请先在设置中保存完整主简历")
+
+    def _generate():
+        sys.path.insert(0, str(Path(__file__).parent / "interview"))
+        from llm_client import llm_chat_deepseek
+
+        return tailor_resume(
+            master["content"],
+            application,
+            lambda prompt: llm_chat_deepseek(
+                [{"role": "user", "content": prompt}],
+                system_prompt="你是严谨的简历编辑。不得编造任何经历或数字，只输出严格JSON。",
+                temperature=0.2,
+            ),
+        )
+
+    try:
+        result = await asyncio.to_thread(_generate)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"定制简历生成失败: {exc}") from exc
+    return save_tailored_resume(application, master["id"], result)
+
+
+@app.post("/api/jobs/tailor-resume")
+async def tailor_resume_for_job(req: TailorResumeRequest):
+    application = _resolve_tailor_application(req)
+    tailored = await _generate_tailored_resume(application)
+    return {"tailored_resume": tailored}
+
+
+@app.get("/api/resumes/tailored")
+def read_tailored_resumes(job_url: str = "", limit: int = 100):
+    return {"resumes": list_tailored_resumes(job_url, max(1, min(limit, 500)))}
+
+
+@app.get("/api/resumes/tailored/{resume_id}")
+def read_tailored_resume(resume_id: int):
+    resume = get_tailored_resume(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="定制简历不存在")
+    return {"tailored_resume": resume}
+
+
+@app.put("/api/resumes/tailored/{resume_id}/status")
+def change_tailored_resume_status(resume_id: int, req: TailoredResumeStatusUpdate):
+    try:
+        resume = update_tailored_resume_status(resume_id, req.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not resume:
+        raise HTTPException(status_code=404, detail="定制简历不存在")
+    return {"tailored_resume": resume}
+
+
+@app.get("/api/resumes/tailored/{resume_id}/download")
+def download_tailored_resume(resume_id: int, format: str = "docx", template_id: str = ""):
+    resume = get_tailored_resume(resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="定制简历不存在")
+    chosen = template_id or resume.get("template_id") or "ats_classic"
+    try:
+        get_template(chosen)
+        structured = resume.get("structured") or parse_resume_structure(resume["content"])
+        payload, media_type, suffix = build_resume_bytes(structured, chosen, format)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        payload,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="tailored-resume-{resume_id}-{chosen}.{suffix}"'},
+    )
+
+
+# ══════════════════════════════════════
+#  按岗位 + 城市运行的求职计划
+# ══════════════════════════════════════
+
+
+def _campaign_with_pipeline(campaign: dict) -> dict:
+    candidates = list_campaign_jobs(campaign["id"])
+    counts = {}
+    for item in candidates:
+        app_view = {"status": item.get("application_status")}
+        conv_view = {
+            "interest_level": item.get("interest_level"),
+            "last_message_from": item.get("last_message_from"),
+        }
+        status = pipeline_status(app_view, conv_view)
+        if status != item.get("pipeline_status"):
+            set_campaign_job_status(campaign["id"], item["application_id"], status)
+            item["pipeline_status"] = status
+        counts[status] = counts.get(status, 0) + 1
+    return {**campaign, "candidates": candidates, "pipeline": counts}
+
+
+@app.post("/api/campaigns")
+def create_campaign(req: CampaignCreateRequest):
+    try:
+        config = validate_campaign_config(req.model_dump())
+        campaign = create_job_campaign(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"campaign": _campaign_with_pipeline(campaign)}
+
+
+@app.get("/api/campaigns")
+def read_campaigns():
+    return {"campaigns": [_campaign_with_pipeline(item) for item in list_job_campaigns()]}
+
+
+@app.get("/api/campaigns/{campaign_id}")
+def read_campaign(campaign_id: int):
+    campaign = get_job_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="求职计划不存在")
+    return {"campaign": _campaign_with_pipeline(campaign)}
+
+
+@app.put("/api/campaigns/{campaign_id}/status")
+def change_campaign_status(campaign_id: int, req: CampaignStatusUpdate):
+    try:
+        campaign = set_job_campaign_status(campaign_id, req.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not campaign:
+        raise HTTPException(status_code=404, detail="求职计划不存在")
+    return {"campaign": _campaign_with_pipeline(campaign)}
+
+
+async def _run_campaign_impl(campaign: dict) -> dict:
+    if not automation or automation.page is None:
+        raise HTTPException(status_code=503, detail="浏览器未启动，求职计划无法搜索岗位")
+    master = get_master_resume()
+    if not master:
+        legacy = get_setting("resume_summary", "")
+        if legacy.strip():
+            master = save_master_resume(legacy)
+    if not master:
+        raise HTTPException(status_code=422, detail="请先保存主简历，再运行求职计划")
+
+    run_id = start_campaign_run(campaign["id"])
+    found_jobs: list[dict] = []
+    tailored_count = 0
+    applied_count = 0
+    try:
+        for city in campaign["cities"]:
+            for keyword in campaign["keywords"]:
+                result = await search_jobs(SearchRequest(keyword=keyword, city=city, limit=60))
+                found_jobs.extend(result.get("jobs") or [])
+
+        ranked = rank_jobs(master["content"], found_jobs, campaign["keywords"], campaign["cities"])
+        matched = [job for job in ranked if job["match_score"] >= campaign["min_match_score"]]
+        matched = matched[: campaign["max_jobs_per_run"]]
+
+        for job in matched:
+            application = get_application(job.get("id")) if job.get("id") else None
+            application = application or get_application_by_url(job.get("job_url") or job.get("url") or "")
+            if not application:
+                continue
+            upsert_campaign_job(
+                campaign["id"], run_id, application["id"], job.get("match_detail") or {"score": job["match_score"]}
+            )
+            tailored = None
+            if campaign.get("auto_tailor"):
+                try:
+                    tailored = await _generate_tailored_resume(application, master)
+                    tailored_count += 1
+                    set_campaign_job_status(
+                        campaign["id"], application["id"], "review", tailored_resume_id=tailored["id"]
+                    )
+                except HTTPException as exc:
+                    print(f"  ⚠️ {application.get('job_title')} 定制简历失败: {exc.detail}")
+
+            if campaign["apply_mode"] == "automatic" and campaign.get("auto_apply_confirmed"):
+                # 自动模式仍受全局每日上限、公司去重、HR 活跃度和风控冷却约束。
+                if get_today_application_count() >= get_daily_limit():
+                    print("  ℹ️ 已达到今日投递上限，本轮停止自动投递")
+                    break
+                try:
+                    result = await apply_to_job(ApplyRequest(job_url=application["job_url"]))
+                    if result.get("success"):
+                        applied_count += 1
+                        set_campaign_job_status(campaign["id"], application["id"], "applied")
+                except HTTPException as exc:
+                    if exc.status_code == 429:
+                        break
+                    print(f"  ⚠️ {application.get('job_title')} 自动投递失败: {exc.detail}")
+
+        run = finish_campaign_run(
+            run_id,
+            found_count=len(found_jobs),
+            matched_count=len(matched),
+            tailored_count=tailored_count,
+            applied_count=applied_count,
+        )
+        payload = {
+            "run": run,
+            "campaign": _campaign_with_pipeline(get_job_campaign(campaign["id"])),
+        }
+        await broadcast_ws({"type": "campaign_complete", "campaign_id": campaign["id"], **run})
+        return payload
+    except Exception as exc:
+        finish_campaign_run(
+            run_id,
+            status="failed",
+            found_count=len(found_jobs),
+            tailored_count=tailored_count,
+            applied_count=applied_count,
+            error_text=str(getattr(exc, "detail", exc)),
+        )
+        raise
+
+
+@app.post("/api/campaigns/{campaign_id}/run")
+async def run_campaign(campaign_id: int):
+    campaign = get_job_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="求职计划不存在")
+    return await _run_campaign_impl(campaign)
+
+
+async def campaign_scheduler_loop():
+    """每分钟检查一次到期计划；计划默认暂停，且自动投递需要二次显式确认。"""
+    while True:
+        await asyncio.sleep(60)
+        if get_setting("campaign_scheduler_enabled", "true") != "true":
+            continue
+        if not automation or automation.page is None:
+            continue
+        for campaign in list_due_job_campaigns():
+            try:
+                await _run_campaign_impl(campaign)
+            except Exception as exc:
+                print(f"  ⚠️ 求职计划 {campaign['id']} 运行失败: {getattr(exc, 'detail', exc)}")
 
 
 @app.post("/api/jobs/chat-suggestion")
@@ -2275,8 +3261,8 @@ def get_districts(city: str = ""):
 @app.get("/api/settings")
 def read_settings():
     settings = get_all_settings()
-    # 检查AI Key是否已配置
-    ai_key = settings.get("ai_api_key", "")
+    # API Key 只返回配置状态，绝不把明文密钥发送到浏览器。
+    ai_key = settings.pop("ai_api_key", "")
     settings["ai_key_configured"] = "true" if ai_key and len(ai_key) > 10 else "false"
     return {"settings": settings}
 
@@ -2293,6 +3279,8 @@ async def update_settings(req: SettingsUpdate):
             # 允许保存空字符串（用于清空过滤关键词等场景）
             set_setting(k, str(v))
             updates[k] = str(v)
+            if k == "resume_summary" and str(v).strip():
+                save_master_resume(str(v))
     await broadcast_ws({"type": "settings_updated", "updates": updates})
     return {"status": "ok", "updated": updates}
 
@@ -2459,7 +3447,13 @@ async def companies_applied_list(limit: int = 200):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.cookies.get(AUTH_COOKIE_NAME, "")
+    session = auth_manager.verify_token(token)
+    if not session:
+        await websocket.close(code=4401, reason="authentication required")
+        return
     await websocket.accept()
+    websocket.state.auth_token = token
     ws_clients.append(websocket)
     try:
         await websocket.send_json(
@@ -2624,6 +3618,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8010)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--ssl-certfile",
+        "--cert",
+        dest="ssl_certfile",
+        default=os.getenv("MYJOB_TLS_CERT") or os.getenv("MYJOB_SSL_CERTFILE"),
+        help="HTTPS 证书路径（也可使用 MYJOB_TLS_CERT）",
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        "--key",
+        dest="ssl_keyfile",
+        default=os.getenv("MYJOB_TLS_KEY") or os.getenv("MYJOB_SSL_KEYFILE"),
+        help="HTTPS 私钥路径（也可使用 MYJOB_TLS_KEY）",
+    )
+    parser.add_argument("--http", action="store_true", help="仅限本地调试：禁用 HTTPS")
     parser.add_argument("--auto-start", action="store_true", help="启动时自动打开浏览器")
     args = parser.parse_args()
 
@@ -2641,8 +3650,15 @@ def main():
         except Exception as e:
             print(f"⚠️ 自动启动失败: {e}")
 
-    print(f"\n🚀 BOSS直聘自动化控制台: http://{args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn_options = {}
+    scheme = "http"
+    if not args.http:
+        cert_file, key_file = ensure_local_certificate(args.ssl_certfile, args.ssl_keyfile)
+        uvicorn_options.update(ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
+        scheme = "https"
+
+    print(f"\n🚀 MyJob V0.0.1: {scheme}://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port, **uvicorn_options)
 
 
 if __name__ == "__main__":

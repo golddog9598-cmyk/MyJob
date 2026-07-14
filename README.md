@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛰️ lakejobai-job-radar
+# MyJob
 
 ### AI 驱动的 BOSS 直聘智能求职助手 · Web 控制台 + CLI
 
@@ -45,9 +45,9 @@ $ lakejob conversations
 
 ---
 
-## 💡 为什么用 lakejobai-job-radar
+## 为什么用 MyJob
 
-| 传统流程 | lakejobai-job-radar |
+| 传统流程 | MyJob |
 |----------|---------------------|
 | 打开网页逐个搜索 | `lakejob search` 一行搜全国 |
 | 手动翻页看薪资 | 福利筛选一键过滤双休五险一金 |
@@ -82,29 +82,116 @@ playwright install firefox    # 浏览器自动化
 ## 🚀 快速开始
 
 ```bash
-# 1. 启动后台服务
+# 1. 构建独立 Vue 前端
+cd resume_ui
+npm install
+npm run build
+cd ..
+
+# 2. 启动后台服务
 python boss_app.py --port 8010
 # 或 CLI 启动
 lakejob server --start --port 8010
 
-# 2. 浏览器打开 http://127.0.0.1:8010
-#    设置页 → 启动浏览器 → 扫码登录 BOSS 直聘
+# 3. 用户首页打开 https://127.0.0.1:8010
+#    普通用户注册或登录后，才能启动 BOSS 浏览器并使用求职功能
+#    管理员后台打开 https://127.0.0.1:8010/MyJobaAdmin
+#    默认超级管理员 Admin / 123456*，首次登录后必须修改密码
 
-# 3. 配置 AI
+# 4. 配置 AI
 #    设置页 → AI 模型配置 → 选平台 → 填 Key → 保存
 
-# 4. 搜索 → 一键投递
-#    搜索页 → 选城市 → 输关键词 → 搜索 → 一键投递
+# 5. 搜索并投递
+#    岗位中心 → 选城市 → 输关键词 → 搜索 → 检查后投递
 ```
+
+前后端职责、认证模型和轻量部署说明见 [`docs/frontend-backend-architecture.md`](docs/frontend-backend-architecture.md)。
+
+首次本地启动会在 `.boss_profile/tls/` 生成自签名证书，浏览器可能显示一次安全提醒。正式部署请通过 `MYJOB_TLS_CERT` 和 `MYJOB_TLS_KEY` 指定受信任证书，或在 Caddy/Nginx 终止 TLS。仅在明确的本地调试场景下可使用 `--http` 关闭 HTTPS。
 
 CLI 极简流程：
 
 ```bash
+# API 已启用工作台认证时，为当前终端提供已注册用户凭据
+set MYJOB_USERNAME=你的用户名
+set MYJOB_PASSWORD=你的密码
+
 $ lakejob search "AI Agent" --city 广州 --welfare "双休,五险一金"
 $ lakejob scan-apply --max-pages 5     # 翻 5 页扫描投递 + 公司去重 + HR 过滤
 $ lakejob apply-batch                  # 投递所有待投递
 $ lakejob status                       # 看浏览器+今日统计
 ```
+
+## 🎯 JD 定制简历与自动求职计划
+
+### 1. 保存主简历
+
+在 Web「简历模板」上传或创建主简历。支持 `DOCX / PDF / TXT / Markdown / HTML / RTF / JSON / ODT`，解析成功后会转换为统一结构并套用用户选择的模板：
+
+```bash
+lakejob resume set --file ./resume.md
+lakejob resume templates
+lakejob resume upload --file ./我的简历.docx --template modern_blue
+lakejob resume template ats_classic
+lakejob resume export --format docx --output ./主简历.docx
+lakejob resume export --format pdf --output ./主简历.pdf
+```
+
+主简历是 AI 唯一允许使用的事实来源。系统不会把 JD 中出现、但主简历里没有的技能或经历写进定制稿；生成后还会检查是否出现主简历之外的新数字。
+
+模板库内置 18 套风格，覆盖 ATS 单栏、现代横幅、时间线、双栏、侧栏、管理、技术、产品、运营、数据、学术、校招和一页紧凑等场景。Web 端使用 Vue 3 可视化编辑器，支持个人资料、个人简介、工作经历、教育经历、项目经历、专业技能、自我评价 7 个模块；模块可启用/隐藏、拖拽或按钮排序，工作/教育/项目条目也可拖拽排序。个人资料支持上传 JPG、PNG 或 WebP 照片并填写年龄，所有模板都会显示居中的个人资料和 3:4 照片框，未上传照片时使用占位头像。经历时间通过年份和月份下拉框填写，结束时间可选“至今”，且前后端都会阻止结束时间早于开始时间；工作与项目成果支持无序/有序分点。除手机、邮箱、所在城市、个人主页、微信和年龄外，每个简历文本字段都可单独调整字号与行距；字体、主题色、页边距和模块间距仍按整份简历统一设置。模板库支持按名称或场景搜索、仅看 ATS 友好模板，并使用当前简历生成真实 A4 缩略图和实时预览。切换模板不会改写简历内容，主简历及每份 JD 定制稿都可按当前模板导出为真正的 A4 DOCX、PDF、HTML 或 Markdown。
+
+### 2. 根据 JD 生成可下载的定制简历
+
+Web 岗位卡片点击「定制简历」，或运行：
+
+```bash
+lakejob resume tailor --job-url "https://www.zhipin.com/job_detail/..." --output ./定制简历.md
+lakejob resume list
+```
+
+每个岗位的版本都会保存到 SQLite，并按当前所选模板导出为 DOCX、PDF、Markdown 或可打印 HTML。`needs_review` 表示检测到主简历中没有的新数字，必须核实；建议所有版本投递前人工通读并点击「确认可用」。
+
+### BOSS 登录状态
+
+控制台右上角依次提供「启动浏览器」「检查登录」「登出」「停止」：
+
+- 启动浏览器后会自动验证 BOSS 登录状态，也可随时手动点击「检查登录」。
+- 检查结果和登出结果均通过页面中央弹窗提示。
+- 「登出」会清除 cookies、站点存储和本地登录状态，但不会停止浏览器或后台服务。
+- 未登录时可直接在独立浏览器窗口中扫码，完成后点击「检查登录」。
+
+### 3. 按岗位和城市建立持续求职计划
+
+```bash
+# 默认：自动搜索、评分、定制简历，但投递前人工确认
+lakejob campaign create \
+  --name "AI 工程师-大湾区" \
+  --keyword "AI Agent" --keyword "大模型应用开发" \
+  --city "深圳" --city "广州" \
+  --min-score 65 --max-jobs 10 --start
+
+lakejob campaign list
+lakejob campaign run 1
+lakejob campaign show 1
+lakejob campaign pause 1
+
+# 确实需要全自动投递时，必须同时给出两项显式参数
+lakejob campaign create --keyword "Python 后端" --city "深圳" \
+  --auto-apply --confirm-auto-apply --start
+```
+
+计划运行链路：
+
+```text
+岗位 + 城市搜索 → 公司/HR 风控过滤 → 本地简历匹配评分 → JD 定制稿
+→ 待确认或自动投递 → AI 接管入站沟通 → HR 回复 → 面试意向
+```
+
+- 定时计划只在服务运行、BOSS 浏览器已登录时执行，默认每 24 小时一轮。
+- 自动投递仍受每日上限、公司去重、HR 活跃度和平台风控冷却约束。
+- 系统会把高意向 HR 标记到「面试意向」，但不会替用户承诺具体面试时间。
+- BOSS 的「发简历」按钮发送的是账号当前在线/附件简历。系统生成的 JD 定制文件需要用户确认后自行上传到对应平台，这是为了避免未经核实的内容被自动发送。
 
 ---
 
@@ -371,6 +458,8 @@ $ lakejob scan-apply --max-pages 5
 | `GET` | `/api/settings` | 读取设置 |
 | `PUT` | `/api/settings` | 更新设置 |
 | `POST` | `/api/system/start` | 启动浏览器 |
+| `POST` | `/api/system/check-login` | 验证 BOSS 登录状态 |
+| `POST` | `/api/system/logout` | 清除 BOSS 会话（保留浏览器运行） |
 | `POST` | `/api/system/stop` | 停止 |
 | `POST` | `/api/system/relogin` | 重新扫码 |
 | `POST` | `/api/system/heartbeat` | 心跳检测 |
@@ -392,7 +481,7 @@ Web 浏览器                  FastAPI                     BOSS 直聘
                           │  replier ─────────────────►│  AI API       │
                           │  state ─────► SQLite       └──────────────┘
                           └──────────────┘
-                  lakejob CLI ──► HTTP 客户端 ──► FastAPI
+                  lakejob CLI ──► HTTPS 客户端 ──► FastAPI
 ```
 
 | 层级 | 选型 |

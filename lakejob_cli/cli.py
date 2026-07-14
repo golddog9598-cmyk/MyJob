@@ -1,16 +1,17 @@
-"""lakejob CLI — BOSS直聘岗位雷达命令行工具."""
+"""MyJob CLI - 求职自动化命令行工具."""
 
 import json
 import os
 import sys
 import click
+from pathlib import Path
 
 from . import client, output
 
 
 @click.group()
 def main():
-    """lakejob — BOSS直聘岗位雷达 v0.1.0
+    """MyJob - 求职自动化平台 V0.0.1
 
     命令返回结构化 JSON 到 stdout，Agent 友好。
     """
@@ -19,7 +20,7 @@ def main():
 # ── 版本 ──
 @main.command("version")
 def version_cmd():
-    output.emit(output.ok("version", data={"version": "0.1.0"}))
+    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.1"}))
 
 
 # ── Schema：AI Agent 工具描述 ──
@@ -172,6 +173,155 @@ def analyze_cmd(job_url, title, company, desc):
     output.emit(output.ok_or_fail(resp, "analyze"))
 
 
+# ── 主简历 / JD 定制简历 ──
+@main.group("resume")
+def resume_group():
+    """管理主简历和按 JD 生成的定制简历。"""
+
+
+@resume_group.command("show")
+def resume_show_cmd():
+    output.emit(output.ok_or_fail(client.get_master_resume(), "resume-show"))
+
+
+@resume_group.command("templates")
+def resume_templates_cmd():
+    """列出内置简历模板库。"""
+    output.emit(output.ok_or_fail(client.get_resume_templates(), "resume-templates"))
+
+
+@resume_group.command("set")
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True, dir_okay=False), help="UTF-8 简历文件")
+@click.option("--name", default="主简历", help="简历名称")
+def resume_set_cmd(file_path, name):
+    content = Path(file_path).read_text(encoding="utf-8")
+    suffix = Path(file_path).suffix.lower().lstrip(".") or "markdown"
+    output.emit(output.ok_or_fail(client.save_master_resume(content, name, suffix), "resume-set"))
+
+
+@resume_group.command("upload")
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True, dir_okay=False), help="DOCX/PDF/TXT/MD/HTML/RTF/JSON/ODT")
+@click.option("--template", "template_id", default="ats_classic", help="模板 ID")
+def resume_upload_cmd(file_path, template_id):
+    """上传并解析多格式简历，套用所选模板。"""
+    output.emit(output.ok_or_fail(client.upload_master_resume(file_path, template_id), "resume-upload"))
+
+
+@resume_group.command("template")
+@click.argument("template_id")
+def resume_template_cmd(template_id):
+    """设置主简历和后续 JD 定制稿使用的模板。"""
+    output.emit(output.ok_or_fail(client.set_master_resume_template(template_id), "resume-template"))
+
+
+@resume_group.command("export")
+@click.option("--format", "output_format", type=click.Choice(["docx", "pdf", "html", "md", "txt"]), default="docx")
+@click.option("--template", "template_id", default="", help="临时指定模板 ID")
+@click.option("--output", "output_path", required=True, type=click.Path(dir_okay=False))
+def resume_export_cmd(output_format, template_id, output_path):
+    """导出主简历为 DOCX/PDF/HTML/Markdown。"""
+    resp = client.export_master_resume(output_format, template_id)
+    if resp.is_error:
+        output.emit(output.fail("resume-export", f"HTTP {resp.status_code}: {resp.text[:200]}"))
+        return
+    Path(output_path).write_bytes(resp.content)
+    output.emit(output.ok("resume-export", data={"saved_to": str(Path(output_path).resolve()), "format": output_format}))
+
+
+@resume_group.command("tailor")
+@click.option("--job-url", required=True, help="岗位 URL")
+@click.option("--title", default="", help="岗位名称（数据库已有时可省略）")
+@click.option("--company", default="", help="公司名称")
+@click.option("--city", default="", help="城市")
+@click.option("--desc", default="", help="JD 文本（数据库已有时可省略）")
+@click.option("--output", "output_path", type=click.Path(dir_okay=False), help="把 Markdown 定制稿写入文件")
+def resume_tailor_cmd(job_url, title, company, city, desc, output_path):
+    resp = client.tailor_resume(job_url, title, company, city, desc)
+    result = output.ok_or_fail(resp, "resume-tailor")
+    if not resp.is_error and output_path:
+        data = resp.json().get("tailored_resume") or {}
+        Path(output_path).write_text(data.get("content") or "", encoding="utf-8")
+        result.setdefault("hints", {})["saved_to"] = str(Path(output_path).resolve())
+    output.emit(result)
+
+
+@resume_group.command("list")
+@click.option("--job-url", default="", help="只看某岗位的定制版本")
+def resume_list_cmd(job_url):
+    output.emit(output.ok_or_fail(client.get_tailored_resumes(job_url), "resume-list"))
+
+
+@resume_group.command("approve")
+@click.argument("resume_id", type=int)
+def resume_approve_cmd(resume_id):
+    output.emit(output.ok_or_fail(client.set_tailored_resume_status(resume_id, "approved"), "resume-approve"))
+
+
+# ── 求职计划 ──
+@main.group("campaign")
+def campaign_group():
+    """按岗位和城市持续搜索、筛选、定制简历并跟踪面试。"""
+
+
+@campaign_group.command("create")
+@click.option("--name", default="求职计划")
+@click.option("--keyword", "keywords", multiple=True, required=True, help="目标岗位，可重复传入")
+@click.option("--city", "cities", multiple=True, required=True, help="目标城市，可重复传入")
+@click.option("--min-score", default=60, type=click.IntRange(0, 100), help="最低匹配分")
+@click.option("--max-jobs", default=10, type=click.IntRange(1, 50), help="每轮最多处理岗位数")
+@click.option("--interval-hours", default=24, type=click.IntRange(1, 168), help="自动运行间隔")
+@click.option("--no-tailor", is_flag=True, help="不自动生成 JD 定制简历")
+@click.option("--auto-apply", is_flag=True, help="匹配后自动投递；仍受每日上限和风控约束")
+@click.option("--confirm-auto-apply", is_flag=True, help="确认允许计划自动投递")
+@click.option("--start", is_flag=True, help="创建后立即启用定时运行")
+def campaign_create_cmd(name, keywords, cities, min_score, max_jobs, interval_hours, no_tailor, auto_apply, confirm_auto_apply, start):
+    if auto_apply and not confirm_auto_apply:
+        output.emit(output.fail("campaign-create", "自动投递需要同时传 --confirm-auto-apply"))
+        return
+    payload = {
+        "name": name,
+        "keywords": list(keywords),
+        "cities": list(cities),
+        "min_match_score": min_score,
+        "max_jobs_per_run": max_jobs,
+        "auto_tailor": not no_tailor,
+        "apply_mode": "automatic" if auto_apply else "review",
+        "auto_apply_confirmed": bool(auto_apply and confirm_auto_apply),
+        "interval_hours": interval_hours,
+        "status": "active" if start else "paused",
+    }
+    output.emit(output.ok_or_fail(client.create_campaign(payload), "campaign-create"))
+
+
+@campaign_group.command("list")
+def campaign_list_cmd():
+    output.emit(output.ok_or_fail(client.get_campaigns(), "campaign-list"))
+
+
+@campaign_group.command("show")
+@click.argument("campaign_id", type=int)
+def campaign_show_cmd(campaign_id):
+    output.emit(output.ok_or_fail(client.get_campaign(campaign_id), "campaign-show"))
+
+
+@campaign_group.command("run")
+@click.argument("campaign_id", type=int)
+def campaign_run_cmd(campaign_id):
+    output.emit(output.ok_or_fail(client.run_campaign(campaign_id), "campaign-run"))
+
+
+@campaign_group.command("resume")
+@click.argument("campaign_id", type=int)
+def campaign_resume_cmd(campaign_id):
+    output.emit(output.ok_or_fail(client.set_campaign_status(campaign_id, "active"), "campaign-resume"))
+
+
+@campaign_group.command("pause")
+@click.argument("campaign_id", type=int)
+def campaign_pause_cmd(campaign_id):
+    output.emit(output.ok_or_fail(client.set_campaign_status(campaign_id, "paused"), "campaign-pause"))
+
+
 # ── 候选池 ──
 @main.command("shortlist")
 @click.argument("action", type=click.Choice(["list", "add", "remove"]))
@@ -212,7 +362,7 @@ def server_cmd(start, stop, port):
     if start:
         cmd = ["python", os.path.join(project_dir, "boss_app.py"), "--port", str(port)]
         subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000), cwd=project_dir)
-        output.emit(output.ok("server", data={"status": "started", "url": f"http://127.0.0.1:{port}"}))
+        output.emit(output.ok("server", data={"status": "started", "url": f"https://127.0.0.1:{port}"}))
     elif stop:
         killed = _kill_boss_app()
         output.emit(output.ok("server", data={"status": "stopped", "killed": killed}))
@@ -228,7 +378,7 @@ def server_cmd(start, stop, port):
 @click.option("--port", type=int, default=8010, help="端口号")
 def restart_cmd(port):
     """杀旧进程 + 起新服务。Windows 用 wmic 精确杀，不动其他 python。"""
-    import subprocess, os, time, urllib.request
+    import ssl, subprocess, os, time, urllib.request
 
     project_dir = os.path.dirname(os.path.dirname(__file__))
     if not os.path.exists(os.path.join(project_dir, "boss_app.py")):
@@ -257,10 +407,19 @@ def restart_cmd(port):
 
     time.sleep(5)
     try:
-        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/api/health"), timeout=3)
-        output.emit(output.ok("restart", data={"port": port, "url": f"http://127.0.0.1:{port}"}))
+        urllib.request.urlopen(
+            urllib.request.Request(f"https://127.0.0.1:{port}/api/health"),
+            timeout=3,
+            context=ssl._create_unverified_context(),
+        )
+        output.emit(output.ok("restart", data={"port": port, "url": f"https://127.0.0.1:{port}"}))
     except Exception:
-        output.emit(output.ok("restart", data={"port": port, "url": f"http://127.0.0.1:{port}", "note": "稍等再试"}))
+        output.emit(
+            output.ok(
+                "restart",
+                data={"port": port, "url": f"https://127.0.0.1:{port}", "note": "稍等再试"},
+            )
+        )
 
 
 def _kill_boss_app():

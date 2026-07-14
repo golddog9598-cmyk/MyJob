@@ -1,1 +1,3 @@
-"""lakejob CLI stub — Phase 2 will flesh this out."""
+"""MyJob command-line integration package."""
+
+__version__ = "0.0.1"

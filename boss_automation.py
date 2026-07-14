@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 
 from playwright.sync_api import Locator
 
-from boss_firefox import BossScraper, pause, decode_salary
+from boss_firefox import BOSS_LOGIN_URL, BossScraper, pause, decode_salary
 from boss_state import (
     init_db,
     add_application,
@@ -255,6 +255,84 @@ class BossAutomation(BossScraper):
         """快速检查当前是否已登录；未知空白页不直接当作过期。"""
         try:
             return self.is_logged_in_page()
+        except Exception:
+            return False
+
+    def check_login_verified(self) -> bool:
+        """使用指定登录入口验证状态；必须取得明确的已登录身份才返回 True。"""
+        if not self._ctx or not self.page:
+            return False
+
+        try:
+            try:
+                self.page.goto(
+                    BOSS_LOGIN_URL,
+                    wait_until="domcontentloaded",
+                    timeout=15000,
+                )
+            except Exception:
+                # BOSS 的统计/广告资源可能不结束；主 DOM 已出现时继续做保守验证。
+                if not self.page.url or self.page.url == "about:blank":
+                    return False
+            self.page.wait_for_timeout(1200)
+            # 前端状态可能稍晚于 load：最多验证三次；任一次都必须有正向身份凭据。
+            for attempt in range(3):
+                if self.check_logged_in() and self.check_page_safety():
+                    return True
+                if attempt < 2:
+                    self.page.wait_for_timeout(500)
+            return False
+        except Exception:
+            return False
+
+    def logout_session(self) -> bool:
+        """清除 BOSS cookies、站点存储及磁盘登录状态，并停留在登录页。"""
+        if not self._ctx or not self.page:
+            return False
+
+        from boss_firefox import STATE_FILE
+
+        clear_site_storage = """async () => {
+            try { localStorage.clear(); } catch (e) {}
+            try { sessionStorage.clear(); } catch (e) {}
+            try {
+                if (indexedDB.databases) {
+                    const dbs = await indexedDB.databases();
+                    await Promise.all(dbs.map(db => db.name && new Promise(resolve => {
+                        const request = indexedDB.deleteDatabase(db.name);
+                        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+                    })));
+                }
+            } catch (e) {}
+            try {
+                const keys = await caches.keys();
+                await Promise.all(keys.map(key => caches.delete(key)));
+            } catch (e) {}
+        }"""
+
+        try:
+            # 先清当前 BOSS 页面存储，再清 cookies；随后再次进入登录页清理同源残留。
+            if "zhipin.com" in (self.page.url or "").lower():
+                self.page.evaluate(clear_site_storage)
+            self._ctx.clear_cookies()
+            self.page.goto(
+                BOSS_LOGIN_URL,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            self.page.evaluate(clear_site_storage)
+            self._ctx.clear_cookies()
+            try:
+                STATE_FILE.unlink(missing_ok=True)
+            except TypeError:
+                if STATE_FILE.exists():
+                    STATE_FILE.unlink()
+            self.page.goto(
+                BOSS_LOGIN_URL,
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            return not self.check_logged_in()
         except Exception:
             return False
 

@@ -1,8 +1,8 @@
 {
-  "name": "lakejob",
-  "version": "0.1.0",
-  "description": "BOSS直聘求职自动化工具 - 搜索/投递/AI聊天/微信交换",
-  "server": "http://127.0.0.1:8010",
+  "name": "MyJob",
+  "version": "V0.0.1",
+  "description": "多平台求职自动化工具 - 岗位筛选/简历投递/HR沟通/面试邀约",
+  "server": "https://127.0.0.1:8010",
   "commands": [
     {
       "name": "search",
@@ -131,6 +131,30 @@
         "company_id": { "type": "string", "required": false },
         "greeting": { "type": "string", "required": false, "description": "留空自动生成，会把 top_hr 称呼带进招呼语" },
         "yes": { "type": "boolean", "required": false, "default": false, "description": "跳过 y/N 确认直接投递" }
+      }
+    },
+    {
+      "name": "resume",
+      "description": "上传 DOCX/PDF/TXT/Markdown/HTML/RTF/JSON/ODT 简历，选择模板，生成带事实审计的 JD 定制简历并导出 DOCX/PDF。",
+      "cli": "lakejob resume templates | lakejob resume upload --file resume.docx --template modern_blue | lakejob resume tailor --job-url <url> | lakejob resume export --format pdf --output resume.pdf",
+      "endpoint": "GET /api/resume-templates; POST /api/resumes/upload; POST /api/jobs/tailor-resume; GET /api/resumes/master/export",
+      "params": {
+        "job_url": { "type": "string", "required": true },
+        "template": { "type": "string", "required": false, "default": "ats_classic" },
+        "format": { "type": "string", "required": false, "enum": ["docx", "pdf", "html", "md", "txt"] },
+        "output": { "type": "string", "required": false, "description": "本地输出路径" }
+      }
+    },
+    {
+      "name": "campaign",
+      "description": "按岗位关键词和城市定时搜索，计算匹配分、生成 JD 定制简历，并跟踪投递到面试的漏斗。默认人工确认投递。",
+      "cli": "lakejob campaign create --keyword <岗位> --city <城市> [--start] | lakejob campaign run <id> | lakejob campaign show <id>",
+      "endpoint": "POST /api/campaigns; POST /api/campaigns/{id}/run",
+      "params": {
+        "keyword": { "type": "string[]", "required": true },
+        "city": { "type": "string[]", "required": true },
+        "min_score": { "type": "integer", "default": 60 },
+        "auto_apply": { "type": "boolean", "default": false, "description": "开启时必须同时显式确认" }
       }
     }
   ],

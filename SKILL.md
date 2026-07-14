@@ -1,4 +1,4 @@
-# lakejobai-job-radar
+# MyJob
 
 > AI Agent 专用的 BOSS 直聘自动化工具。CLI 提供 14 条命令，stdout JSON 信封，Agent 友好。
 
@@ -27,7 +27,7 @@ lakejob status                         # 检查登录态
 - `lakejob schema` 返回 12 个可用命令
 - `lakejob status` 返回 `browser_running: true`
 
-**如 `browser_running: false`**：提示用户在浏览器打开 `http://127.0.0.1:8010`，设置页启动浏览器并扫码登录。
+**如 `browser_running: false`**：提示用户在浏览器打开 `https://127.0.0.1:8010/app`，设置页启动浏览器并登录招聘平台。
 
 ---
 
@@ -114,7 +114,7 @@ lakejob stats
 |------|------|-----------|
 | `true` | 成功 | 读取 `data`，按 `pagination` 翻页 |
 | `false` + HTTP 503 | 服务未启动 | 提示用户 `lakejob server --start` |
-| `false` + 500 | 浏览器未登录 | 提示用户登录 `http://127.0.0.1:8010` |
+| `false` + 500 | 浏览器未登录 | 提示用户登录 `https://127.0.0.1:8010/app` |
 | `false` + 429 | 今日上限 | 告知用户，等待次日 |
 | `false` + 404 | 资源不存在 | 确认参数正确 |
 

@@ -1,26 +1,47 @@
-"""HTTP client for lakejob FastAPI backend."""
+"""HTTPS client for the MyJob FastAPI backend."""
 
 import os
 from typing import Optional
+from urllib.parse import urlparse
+
 import httpx
 
-BASE_URL = os.environ.get("LAKEJOB_API", "http://127.0.0.1:8010")
+BASE_URL = os.environ.get("MYJOB_API") or os.environ.get("LAKEJOB_API", "https://127.0.0.1:8010")
+_verify_env = os.environ.get("MYJOB_TLS_VERIFY", "").strip().lower()
+_local_https = urlparse(BASE_URL).hostname in {"127.0.0.1", "localhost", "::1"}
+_verify_tls = _verify_env not in {"false", "0", "no"} if _verify_env else not _local_https
+_client = httpx.Client(base_url=BASE_URL, verify=_verify_tls)
+
+
+def _request(method: str, path: str, *, json=None, data=None, files=None, timeout=120):
+    try:
+        response = _client.request(method, path, json=json, data=data, files=files, timeout=timeout)
+        if response.status_code == 401 and not path.startswith("/api/auth/"):
+            username = os.environ.get("MYJOB_USERNAME") or os.environ.get("LAKEJOB_USERNAME", "")
+            password = os.environ.get("MYJOB_PASSWORD") or os.environ.get("LAKEJOB_PASSWORD", "")
+            if username and password:
+                login = _client.post(
+                    "/api/auth/login",
+                    json={"username": username, "password": password},
+                    timeout=30,
+                )
+                if login.is_success:
+                    response = _client.request(method, path, json=json, data=data, files=files, timeout=timeout)
+        return response
+    except httpx.ConnectError:
+        return httpx.Response(503, text="Cannot connect to MyJob server. Run `lakejob server --start` first.")
 
 
 def _post(path: str, json=None, timeout=120):
-    try:
-        resp = httpx.post(f"{BASE_URL}{path}", json=json, timeout=timeout)
-    except httpx.ConnectError:
-        resp = httpx.Response(503, text="Cannot connect to lakejob server. Run `lakejob server --start` first.")
-    return resp
+    return _request("POST", path, json=json, timeout=timeout)
 
 
 def _get(path: str, timeout=30):
-    try:
-        resp = httpx.get(f"{BASE_URL}{path}", timeout=timeout)
-    except httpx.ConnectError:
-        resp = httpx.Response(503, text="Cannot connect to lakejob server. Run `lakejob server --start` first.")
-    return resp
+    return _request("GET", path, timeout=timeout)
+
+
+def _put(path: str, json=None, timeout=120):
+    return _request("PUT", path, json=json, timeout=timeout)
 
 
 def search(keyword: str, city: str = "", limit: int = 60):
@@ -82,6 +103,88 @@ def analyze(job_url: str, title: str = "", company: str = "", desc: str = ""):
     return _post("/api/jobs/analyze", {"job_url": job_url, "job_title": title, "company": company, "description": desc})
 
 
+def get_master_resume():
+    return _get("/api/resumes/master")
+
+
+def get_resume_templates():
+    return _get("/api/resume-templates")
+
+
+def save_master_resume(content: str, name: str = "主简历", source_format: str = "markdown"):
+    return _put(
+        "/api/resumes/master",
+        {"name": name, "content": content, "source_format": source_format},
+    )
+
+
+def upload_master_resume(file_path: str, template_id: str = "ats_classic"):
+    from pathlib import Path
+
+    path = Path(file_path)
+    try:
+        with path.open("rb") as handle:
+            return _request(
+                "POST",
+                "/api/resumes/upload",
+                files={"file": (path.name, handle)},
+                data={"template_id": template_id},
+                timeout=180,
+            )
+    except OSError as exc:
+        return httpx.Response(400, text=str(exc))
+
+
+def set_master_resume_template(template_id: str):
+    return _put("/api/resumes/master/template", {"template_id": template_id})
+
+
+def export_master_resume(output_format: str = "docx", template_id: str = ""):
+    from urllib.parse import urlencode
+
+    query = urlencode({"format": output_format, "template_id": template_id})
+    return _get(f"/api/resumes/master/export?{query}", timeout=180)
+
+
+def tailor_resume(job_url: str, title: str = "", company: str = "", city: str = "", desc: str = ""):
+    return _post(
+        "/api/jobs/tailor-resume",
+        {"job_url": job_url, "job_title": title, "company": company, "city": city, "description": desc},
+        timeout=180,
+    )
+
+
+def get_tailored_resumes(job_url: str = ""):
+    from urllib.parse import urlencode
+
+    query = "?" + urlencode({"job_url": job_url}) if job_url else ""
+    return _get(f"/api/resumes/tailored{query}")
+
+
+def set_tailored_resume_status(resume_id: int, status: str):
+    return _put(f"/api/resumes/tailored/{resume_id}/status", {"status": status})
+
+
+def create_campaign(payload: dict):
+    return _post("/api/campaigns", payload)
+
+
+def get_campaigns():
+    return _get("/api/campaigns")
+
+
+def get_campaign(campaign_id: int):
+    return _get(f"/api/campaigns/{campaign_id}")
+
+
+def run_campaign(campaign_id: int):
+    return _post(f"/api/campaigns/{campaign_id}/run", timeout=1800)
+
+
+def set_campaign_status(campaign_id: int, status: str):
+    return _put(f"/api/campaigns/{campaign_id}/status", {"status": status})
+
+
 def get_shortlists():
     return _get("/api/shortlists")
 
@@ -93,8 +196,7 @@ def add_shortlist(job_url: str, title: str = "", company: str = "", salary: str 
 
 
 def remove_shortlist(sid: int):
-    resp = httpx.delete(f"{BASE_URL}/api/shortlists/{sid}", timeout=30)
-    return resp
+    return _request("DELETE", f"/api/shortlists/{sid}", timeout=30)
 
 
 def company_preview(

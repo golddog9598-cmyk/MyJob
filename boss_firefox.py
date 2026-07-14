@@ -14,7 +14,6 @@ BOSS直聘 AI Agent 岗位采集工具
 
 import argparse
 import csv
-import io
 import json
 import os
 import random
@@ -30,8 +29,12 @@ from urllib.parse import quote_plus, urlencode
 
 from playwright.sync_api import sync_playwright
 
-# Windows 编码修复
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# Windows 编码修复：不能替换 stdout 包装器，否则 pytest/IDE 的捕获流会被
+# 旧包装器析构时一并关闭。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+except (AttributeError, ValueError):
+    pass
 
 # ── 配置 ──
 TODAY = date.today().isoformat()
@@ -109,7 +112,7 @@ CITIES = {
 
 OUTPUT_DIR = Path.home() / "AI" / "岗位日报"
 STATE_FILE = Path(__file__).parent / ".boss_profile" / "firefox_state.json"
-PROFILE_DIR = Path(__file__).parent / ".boss_profile" / "firefox_user_data"
+BOSS_LOGIN_URL = "https://www.zhipin.com/web/user/"
 
 ANTI_DETECT = """
 // ── 核心：隐藏 webdriver 标记 ──
@@ -458,18 +461,23 @@ class BossScraper:
 
     def start(self):
         self._pw = sync_playwright().start()
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        kw = {
-            "headless": self.headless,
+        self._br = self._pw.firefox.launch(headless=self.headless)
+        context_kw = {
             "viewport": {"width": 1280, "height": 800},
             "locale": "zh-CN",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
         }
-        self._ctx = self._pw.firefox.launch_persistent_context(str(PROFILE_DIR), **kw)
-        self._br = None
-
-        # 持久化 profile 自动管理 cookies，不额外 add_cookies 避免冲突
         if STATE_FILE.exists():
+            context_kw["storage_state"] = str(STATE_FILE)
+        try:
+            self._ctx = self._br.new_context(**context_kw)
+        except Exception:
+            # 旧状态文件损坏时仍允许打开登录页重新登录。
+            context_kw.pop("storage_state", None)
+            self._ctx = self._br.new_context(**context_kw)
+
+        # 使用临时浏览器 profile，登录 cookies 仍通过 storage_state 持久化。
+        if STATE_FILE.exists() and "storage_state" not in context_kw:
             try:
                 state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 cookies = state.get("cookies") or []
@@ -483,7 +491,7 @@ class BossScraper:
                 pass
 
         self._ctx.add_init_script(ANTI_DETECT)
-        self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        self.page = self._ctx.new_page()
         self.page.set_default_timeout(30000)
 
     def close(self):
@@ -492,8 +500,11 @@ class BossScraper:
                 self._ctx.close()
             except Exception:
                 pass
-        elif self._br:
-            self._br.close()
+        if self._br:
+            try:
+                self._br.close()
+            except Exception:
+                pass
         if self._pw:
             self._pw.stop()
 
@@ -516,43 +527,12 @@ class BossScraper:
             "ka=header-login",
             "login?redirect=",
         )
-        if any(path in url for path in explicit_login_paths):
-            return True
-
         body = self._body_text(4000)
 
-        # 详情页/聊天页的已登录特征，优先级高于任意“登录”字样。
-        authenticated_indicators = (
-            "职位描述",
-            "岗位职责",
-            "任职要求",
-            "公司介绍",
-            "竞争力分析",
-            "立即沟通",
-            "立即聊",
-            "已沟通",
-            "继续沟通",
-            "聊天",
-            "消息",
-            "沟通中",
-            "发简历",
-        )
-        if any(text in body for text in authenticated_indicators):
-            return False
-
-        strong_prompts = (
-            "请登录",
-            "扫码登录",
-            "密码登录",
-            "验证码登录",
-            "微信扫码",
-            "登录BOSS直聘",
-        )
-        if not any(text in body for text in strong_prompts):
-            return False
-
+        # 登录弹窗可能覆盖在聊天页/职位页上，底层页面仍会包含“聊天”“消息”等字样。
+        # 因此必须先检查可见登录控件，不能让已登录页面关键词提前短路判断。
         try:
-            return self.page.evaluate("""() => {
+            login_ui_visible = self.page.evaluate("""() => {
                 const visible = el => {
                     if (!el) return false;
                     const style = getComputedStyle(el);
@@ -573,6 +553,7 @@ class BossScraper:
                     'input[type="password"]',
                     '.qrcode-img',
                     'img[class*="qrcode"]',
+                    '[class*="qrcode"] canvas',
                     '[class*="login-panel"]',
                     '[class*="login-modal"]',
                     '[class*="sign-form"]',
@@ -583,23 +564,118 @@ class BossScraper:
                     Array.from(document.querySelectorAll(sel)).some(visible)
                 );
             }""")
+            if login_ui_visible:
+                return True
         except Exception:
-            # JS 检测失败时, body 又已出现强登录提示,
-            # 宁可保守视为"仍在登录页"返回 True, 避免拿未登录态去操作业务接口.
+            pass
+
+        strong_prompts = (
+            "请登录",
+            "扫码登录",
+            "密码登录",
+            "验证码登录",
+            "微信扫码",
+            "登录BOSS直聘",
+        )
+        if any(text in body for text in strong_prompts):
             return True
 
+        # 只有确认不存在登录控件和强登录提示后，才使用业务页面文字判断。
+        authenticated_indicators = (
+            "职位描述",
+            "岗位职责",
+            "任职要求",
+            "公司介绍",
+            "竞争力分析",
+            "立即沟通",
+            "立即聊",
+            "已沟通",
+            "继续沟通",
+            "聊天",
+            "消息",
+            "沟通中",
+            "发简历",
+        )
+        if any(text in body for text in authenticated_indicators):
+            return False
+
+        if any(path in url for path in explicit_login_paths):
+            return True
+        return False
+
     def is_logged_in_page(self):
-        """当前页面是否能作为已登录态使用；about:blank 属于未知，不当作过期。"""
+        """仅在取得明确用户身份或个人区证据时确认已登录。"""
         try:
             url = self.page.url
         except Exception:
             return False
         if url == "about:blank":
-            return True
-        return not self._login_prompt_visible()
+            return False
+        if self._login_prompt_visible():
+            return False
+        try:
+            return bool(self.page.evaluate("""async () => {
+                const hasIdentity = value => {
+                    if (!value || typeof value !== 'object') return false;
+                    const keys = ['encryptUserId', 'encryptGeekId', 'userId', 'uid', 'geekId'];
+                    if (keys.some(key => value[key])) return true;
+                    if (value.isLogin === true || value.login === true) return true;
+                    return false;
+                };
+
+                let apiAuthenticated = false;
+                try {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 1500);
+                    let response;
+                    try {
+                        response = await fetch('/wapi/zpuser/wap/getUserInfo.json', {
+                            credentials: 'include',
+                            signal: controller.signal,
+                            headers: {'Accept': 'application/json', 'x-requested-with': 'XMLHttpRequest'},
+                        });
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                    if (response.ok) {
+                        const data = await response.json();
+                        const zp = data && data.zpData;
+                        const payload = data && data.data;
+                        const candidates = [
+                            zp && zp.userInfo, zp && zp.geekInfo, zp && zp.user, zp,
+                            payload && payload.userInfo, payload && payload.geekInfo, payload && payload.user,
+                        ];
+                        apiAuthenticated = candidates.some(hasIdentity);
+                    }
+                } catch (e) {}
+                if (apiAuthenticated) return true;
+
+                const visible = el => {
+                    if (!el) return false;
+                    const style = getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden'
+                        && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
+                };
+                const personalSelectors = [
+                    '[class*="user-avatar"]', '[class*="user-name"]',
+                    '[class*="nav-user"]', '[class*="geek-avatar"]',
+                    'a[href*="/web/geek/resume"]', 'a[href*="/web/geek/chat"]',
+                ];
+                const hasPersonalControl = personalSelectors.some(selector =>
+                    Array.from(document.querySelectorAll(selector)).some(visible)
+                );
+                const body = (document.body && document.body.innerText) || '';
+                const hasPersonalText = ['我的简历', '求职期望', '个人中心', '账号设置']
+                    .some(text => body.includes(text));
+                return location.pathname.startsWith('/web/geek/')
+                    && hasPersonalControl && hasPersonalText;
+            }"""))
+        except Exception:
+            return False
 
     def login(self):
-        self.page.goto("https://www.zhipin.com/web/user/?ka=header-login")
+        self.page.goto(BOSS_LOGIN_URL)
         pause(2, 4)
         self.page.bring_to_front()
         print("\n🔓 浏览器已打开，请扫码登录")
@@ -679,6 +755,7 @@ class BossScraper:
         edu: Optional[int] = None,         # 学历 code (内部参数名, URL 映射为 degree)
         scale: Optional[int] = None,      # 公司规模 code
         stage: Optional[int] = None,      # 融资阶段 code
+        area_business: str = "",         # 区县/商圈 code，前端字段 areaBusiness
     ):
         """搜索关键词，返回岗位列表。
 
@@ -691,6 +768,7 @@ class BossScraper:
         - experience= 经验 (102=应届, 103=1年内, 104=1-3年, 105=3-5年, 106=5-10年, 107=10年以上, 108=在校)
         - scale=     公司规模 (301=0-20, 302=20-99, 303=100-499, 304=500-999, 305=1000-9999, 306=10000以上)
         - stage=     融资阶段 (801=未融资, 802=天使轮, 803=A轮, 804=B轮, 805=C轮, 806=D轮及以上, 807=已上市, 808=不需要融资)
+        - areaBusiness= 区县/商圈 code
         """
         t0 = time.time()
 
@@ -727,6 +805,8 @@ class BossScraper:
             params["scale"] = str(scale)
         if stage is not None:
             params["stage"] = str(stage)
+        if area_business:
+            params["areaBusiness"] = str(area_business)
 
         url = "https://www.zhipin.com/web/geek/job?" + urlencode(params)
         log.info(f"搜索URL: {url}")
@@ -839,22 +919,34 @@ class BossScraper:
                 document.querySelectorAll('a[href*="/job_detail/"]').forEach(a => {
                     const href = a.href || a.getAttribute('href') || '';
                     if (!href || seen.has(href)) return;
-                    const card = a.closest('.job-card-wrapper, .job-card-body, .job-primary, li, .job-list-box, .search-job-result') || a;
+                    // 2026 新版搜索页每个岗位是一个 li。优先取最近 li，避免
+                    // .search-job-result 把整页岗位合并成一张“卡片”。
+                    const card = a.closest('li')
+                        || a.closest('.job-card-wrapper, .job-card-body, .job-primary, .job-list-box')
+                        || a;
                     const lines = linesOf(card);
-                    let title = pickText(card, [
+                    let title = (a.innerText || '').trim().split('\\n')[0] || pickText(card, [
                         '.job-name', '.job-title', '.job-card-left .job-name',
                         '[class*="job-name"]', '[class*="job-title"]'
-                    ]) || (a.innerText || '').trim().split('\\n')[0] || lines[0] || '';
+                    ]) || lines[0] || '';
                     let salary = pickText(card, ['.salary', '.red', '[class*="salary"]'])
                         || lines.find(x => /\\d+[-~]\\d+K/i.test(x)) || '';
+                    const salaryIndex = lines.findIndex(x => /\\d+[-~]\\d+K/i.test(x));
+                    const tail = salaryIndex >= 0 ? lines.slice(salaryIndex + 1, salaryIndex + 8) : lines.slice(1, 8);
+                    let experience = tail.find(x => /经验|应届|在校|不限|\\d+[-~]\\d+年/.test(x) && x.length < 30) || '';
+                    let education = tail.find(x => /本科|硕士|博士|大专|学历不限|中专|高中/.test(x) && x.length < 30) || '';
+                    const identityLines = tail.filter(x =>
+                        x !== experience && x !== education && x !== salary &&
+                        !/\\d+[-~]\\d+K|经验|应届|在校|学历|本科|硕士|博士|大专|中专|高中/.test(x) &&
+                        x.length > 1 && x.length < 60
+                    );
                     let company = pickText(card, [
                         '.company-name', '.brand-name', '.company-text',
                         '[class*="company-name"]', '[class*="brand-name"]'
-                    ]);
-                    let city = pickText(card, ['.job-area', '[class*="job-area"]'])
-                        || lines.find(x => x.includes('·') && x.length < 40) || '';
-                    let experience = lines.find(x => /经验|应届|在校|不限/.test(x) && x.length < 30) || '';
-                    let education = lines.find(x => /本科|硕士|博士|大专|学历不限|中专|高中/.test(x) && x.length < 30) || '';
+                    ]) || identityLines[0] || '';
+                    let city = identityLines.find(x => x !== company && (x.includes('·') || /市$/.test(x)))
+                        || identityLines.find(x => x !== company)
+                        || '';
                     // CHANGES §3 §4: 抓 companyId / brandName / hrActive
                     let companyId = '';
                     let brandName = '';
@@ -883,6 +975,10 @@ class BossScraper:
                             !/经验|应届|在校|不限|本科|硕士|博士|大专|学历|·|\\d+[-~]\\d+K/i.test(x) &&
                             x.length > 1 && x.length < 40
                         ) || '';
+                    }
+                    // 错误值宁可留空，不能让薪资/经验污染城市筛选。
+                    if (city === company || /\\d+[-~]\\d+K|薪|经验|学历|本科|硕士|博士|大专/.test(city)) {
+                        city = '';
                     }
                     title = title.replace(/\\s+/g, ' ').trim();
                     if (title && salary) {
