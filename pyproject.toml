@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myjob"
-version = "0.0.3"
+version = "0.0.4"
 description = "MyJob · AI 驱动的智能求职助手"
 readme = "README.md"
 license = { file = "LICENSE" }

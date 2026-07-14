@@ -1,6 +1,6 @@
 # 项目优化变更说明
 
-> 优化基于 `lakejobai-job-radar` 原项目（https://github.com/lake121380-source/lakejobai-job-radar）
+> 本文记录 MyJob 在岗位去重、批量处理与沟通流程上的历史优化。
 
 ## 修改的核心问题
 

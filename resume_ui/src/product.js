@@ -1,5 +1,5 @@
 export const APP_NAME = 'MyJob'
-export const APP_VERSION = 'V0.0.3'
+export const APP_VERSION = 'V0.0.4'
 
 export const ROUTES = Object.freeze({
   home: '/',

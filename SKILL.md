@@ -1,12 +1,13 @@
 # MyJob
 
-> AI Agent 专用的 BOSS 直聘自动化工具。CLI 提供 14 条命令，stdout JSON 信封，Agent 友好。
+> AI Agent 可调用的 MyJob 命令行入口。CLI 覆盖岗位、简历、计划、沟通和服务管理，stdout 使用 JSON 信封。
 
 ## Install
 
 ```bash
-git clone https://github.com/longnull-ck/lakejobai-job-radar.git
-cd lakejobai-job-radar
+git clone https://github.com/golddog9598-cmyk/MyJob.git
+cd MyJob
+git checkout MyJob
 pip install -e .
 playwright install firefox
 ```
@@ -24,7 +25,7 @@ lakejob status                         # 检查登录态
 
 完成标准：
 - `lakejob doctor` 返回 `ok=true`
-- `lakejob schema` 返回 12 个可用命令
+- `lakejob schema` 返回当前版本可用的工具描述
 - `lakejob status` 返回 `browser_running: true`
 
 **如 `browser_running: false`**：提示用户在浏览器打开 `https://127.0.0.1:8010/app`，设置页启动浏览器并登录招聘平台。

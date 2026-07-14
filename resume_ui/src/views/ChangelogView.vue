@@ -8,6 +8,21 @@ defineEmits(['toggle-theme'])
 
 const releases = [
   {
+    version: 'V0.0.4',
+    date: '2026-07-14',
+    summary: '建立独立 MyJob 仓库，并按当前产品能力重写项目文档。',
+    groups: [
+      {
+        title: '项目文档',
+        items: [
+          'MyJob 仓库调整为独立项目，不再保留其他仓库的关联说明。',
+          'README 按当前 Vue、FastAPI、认证、管理员后台、简历中心和自动化流程完整重写。',
+          '更新安装地址、开发约定和项目介绍，并移除 CLI 中失效的旧本地路径。',
+        ],
+      },
+    ],
+  },
+  {
     version: 'V0.0.3',
     date: '2026-07-14',
     summary: '修复简历中心部分控件未正确切换到日间样式的问题。',
