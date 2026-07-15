@@ -7,20 +7,24 @@
 
     <section class="search-workbench">
       <form @submit.prevent="searchJobs">
+        <label><span>招聘平台</span><select v-model="search.platform" @change="changePlatform"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
         <label class="field-wide"><span>岗位关键词</span><input v-model.trim="search.keyword" required placeholder="例如：AI Agent, Python 后端" /></label>
         <label><span>城市</span><input v-model.trim="search.city" placeholder="全国" /></label>
         <label><span>薪资</span><select v-model="search.salary"><option value="">不限</option><option value="403">3-5K</option><option value="404">5-10K</option><option value="405">10-20K</option><option value="406">20-50K</option><option value="407">50K 以上</option></select></label>
         <label><span>经验</span><select v-model="search.experience"><option value="">不限</option><option value="102">应届生</option><option value="104">1-3 年</option><option value="105">3-5 年</option><option value="106">5-10 年</option></select></label>
         <label><span>学历</span><select v-model="search.degree"><option value="">不限</option><option value="202">大专</option><option value="203">本科</option><option value="204">硕士</option><option value="205">博士</option></select></label>
-        <label><span>福利关键词</span><input v-model.trim="search.welfare" placeholder="双休, 五险一金" /></label>
+        <label v-if="search.platform === 'boss'"><span>福利关键词</span><input v-model.trim="search.welfare" placeholder="双休, 五险一金" /></label>
         <div class="search-options field-wide">
           <label class="check-field"><input v-model="search.dedup_company" type="checkbox" /><span>过滤已投递公司</span></label>
-          <label class="check-field"><input v-model="search.filter_inactive_hr" type="checkbox" /><span>跳过不活跃招聘者</span></label>
-          <label class="inline-number"><span>最多未活跃</span><input v-model.number="search.max_hr_inactive_days" type="number" min="1" max="60" /><span>天</span></label>
+          <template v-if="search.platform === 'boss'">
+            <label class="check-field"><input v-model="search.filter_inactive_hr" type="checkbox" /><span>跳过不活跃招聘者</span></label>
+            <label class="inline-number"><span>最多未活跃</span><input v-model.number="search.max_hr_inactive_days" type="number" min="1" max="60" /><span>天</span></label>
+          </template>
+          <span v-else class="platform-capability-note">招聘者活跃度筛选目前仅支持 BOSS 直聘</span>
         </div>
         <button class="primary-action search-submit" type="submit" :disabled="searching"><Icon :icon="searching ? 'mdi:loading' : 'mdi:magnify'" :class="{ spin: searching }" />{{ searching ? '正在搜索' : '搜索并入库' }}</button>
       </form>
-      <p v-if="searchResult" class="search-result" role="status">找到 {{ searchResult.jobs_found || 0 }} 个岗位，保存 {{ searchResult.saved || 0 }} 个，过滤 {{ totalSkipped }} 个。</p>
+      <p v-if="searchResult" class="search-result" role="status">{{ platformName(searchResult.platform) }}：找到 {{ searchResult.jobs_found || 0 }} 个岗位，保存 {{ searchResult.saved || 0 }} 个，过滤 {{ totalSkipped }} 个。</p>
       <p v-if="error" class="form-error" role="alert"><Icon icon="mdi:alert-circle-outline" />{{ error }}</p>
     </section>
 
@@ -36,10 +40,11 @@
       <div v-else-if="!jobs.length" class="empty-state"><Icon icon="mdi:briefcase-search-outline" /><strong>当前筛选没有岗位</strong><span>调整筛选条件或从上方开始一次新搜索。</span></div>
       <div v-else class="job-table-wrap">
         <table class="job-table">
-          <thead><tr><th>岗位</th><th>公司与城市</th><th>薪资</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>岗位</th><th>来源</th><th>公司与城市</th><th>薪资</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="job in jobs" :key="job.id">
               <td><a :href="job.job_url" target="_blank" rel="noreferrer">{{ job.job_title || '未命名岗位' }}</a><small>{{ job.experience || '经验不限' }} · {{ job.education || '学历不限' }}</small></td>
+              <td><span class="platform-source" :data-platform="job.platform || 'boss'">{{ platformName(job.platform) }}</span></td>
               <td><strong>{{ job.company || '公司待补充' }}</strong><small>{{ job.city || '城市不限' }}</small></td>
               <td class="number-cell">{{ job.salary || '面议' }}</td>
               <td><span class="status-text" :data-status="job.status">{{ statusLabel(job.status) }}</span></td>
@@ -63,16 +68,21 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { api } from '../api'
 
-const emit = defineEmits(['notify', 'changed'])
+const props = defineProps({
+  platform: { type: String, default: 'boss' },
+  platforms: { type: Array, default: () => [] },
+})
+const emit = defineEmits(['notify', 'changed', 'platform-change'])
+const platforms = computed(() => props.platforms)
 const filters = [
   { label: '全部', value: '' }, { label: '待投递', value: 'pending' }, { label: '已投递', value: 'applied' },
   { label: '需回复', value: 'replied' }, { label: '已过滤', value: 'filtered' },
 ]
-const search = reactive({ keyword: '', city: '全国', salary: '', experience: '', degree: '', welfare: '', dedup_company: true, filter_inactive_hr: true, max_hr_inactive_days: 7 })
+const search = reactive({ platform: props.platform, keyword: '', city: '全国', salary: '', experience: '', degree: '', welfare: '', dedup_company: true, filter_inactive_hr: true, max_hr_inactive_days: 7 })
 const jobs = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -87,12 +97,14 @@ const searchResult = ref(null)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const totalSkipped = computed(() => ['skipped_company', 'skipped_inactive_hr', 'skipped_keyword', 'skipped_garbled'].reduce((sum, key) => sum + Number(searchResult.value?.[key] || 0), 0))
 const statusLabel = value => ({ pending: '待投递', applied: '已投递', replied: '需回复', filtered: '已过滤', skipped: '已跳过', failed: '失败' }[value] || value || '未知')
+const platformName = value => props.platforms.find(item => item.id === (value || 'boss'))?.label || value || 'BOSS 直聘'
 
 async function loadJobs(force = false) {
   loadingJobs.value = true
   error.value = ''
   const query = new URLSearchParams({ limit: String(pageSize), offset: String((page.value - 1) * pageSize) })
   if (statusFilter.value) query.set('status', statusFilter.value)
+  query.set('platform', search.platform)
   try {
     const result = await api.get(`/api/jobs?${query}`, { force })
     jobs.value = result.jobs || []
@@ -110,6 +122,10 @@ async function searchJobs() {
   searchResult.value = null
   try {
     const payload = { ...search, limit: 60 }
+    if (payload.platform !== 'boss') {
+      payload.welfare = null
+      payload.filter_inactive_hr = false
+    }
     for (const key of ['experience', 'degree']) payload[key] = payload[key] ? Number(payload[key]) : null
     const result = await api.post('/api/jobs/search', payload)
     searchResult.value = result
@@ -127,9 +143,9 @@ async function searchJobs() {
 async function applyJob(job) {
   busyId.value = job.id
   try {
-    const result = await api.post('/api/jobs/apply', { job_url: job.job_url, company_name: job.company, company_id: job.company_id })
+    const result = await api.post('/api/jobs/apply', { platform: job.platform || search.platform, job_url: job.job_url, company_name: job.company, company_id: job.company_id })
     if (!result.success) throw new Error(result.message || '投递失败')
-    emit('notify', { type: 'success', message: '岗位已投递' })
+    emit('notify', { type: 'success', message: `${platformName(job.platform)}岗位已投递` })
     await loadJobs(true)
     emit('changed')
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
@@ -157,6 +173,14 @@ async function tailorJob(job) {
 
 function setFilter(value) { statusFilter.value = value; page.value = 1; loadJobs(true) }
 function goPage(value) { page.value = value; loadJobs(true) }
+function changePlatform() { page.value = 1; emit('platform-change', search.platform); loadJobs(true) }
+
+watch(() => props.platform, value => {
+  if (!value || value === search.platform) return
+  search.platform = value
+  page.value = 1
+  loadJobs(true)
+})
 
 onMounted(() => loadJobs())
 </script>

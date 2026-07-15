@@ -1635,8 +1635,7 @@ td a:hover{color:var(--accent)}
         <span id="metaJobs">0 待投递</span>
       </div>
       <div style="display:flex;gap:6px;margin-left:auto;">
-        <button class="btn btn-success btn-sm" id="btnStart" onclick="startSystem()">启动浏览器</button>
-        <button class="btn btn-sm" id="btnCheckLogin" onclick="checkLoginStatus()" disabled>检查登录</button>
+        <button class="btn btn-success btn-sm" id="btnStart" onclick="startSystem()">启动登录</button>
         <button class="btn btn-sm" id="btnLogout" onclick="logoutBoss()" disabled>登出</button>
         <button class="btn btn-danger btn-sm" id="btnStop" onclick="stopSystem()" disabled>停止</button>
       </div>
@@ -2121,7 +2120,7 @@ function handleWS(msg){
   switch(msg.type){
     case 'browser_crashed':
       const el=document.getElementById('searchStatus');
-      if(el){el.innerHTML='<div class="status-banner">'+esc(msg.message||'浏览器已崩溃')+' <button class="btn btn-xs btn-primary" onclick="fetch(\'/api/system/start\',{method:\'POST\'}).then(()=>{refreshStatus();})">启动浏览器</button></div>';}
+      if(el){el.innerHTML='<div class="status-banner">'+esc(msg.message||'浏览器已崩溃')+' <button class="btn btn-xs btn-primary" onclick="fetch(\'/api/system/start?platform=boss&login=true\',{method:\'POST\'}).then(()=>{refreshStatus();})">启动登录</button></div>';}
       toast('浏览器已崩溃','error');
       break;
     case'connected':updateStatusUI(msg.status);break;
@@ -2155,8 +2154,7 @@ function refreshStatus(){
   fetch('/api/status').then(r=>r.json()).then(s=>{
     updateStatusUI(s);
     // statToday 改为「列表内投递」，数据从 /api/stats 取，不再用 today_applications
-    document.getElementById('btnStart').disabled=s.browser_running;
-    document.getElementById('btnCheckLogin').disabled=!s.browser_running;
+    document.getElementById('btnStart').disabled=false;
     document.getElementById('btnLogout').disabled=!s.browser_running;
     document.getElementById('btnStop').disabled=!s.browser_running;
   }).catch(()=>{});
@@ -2205,24 +2203,6 @@ function showStatusModal(type,title,message){
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
 }
 
-function checkLoginStatus(options){
-  options=options||{};
-  const btn=document.getElementById('btnCheckLogin');
-  btn.disabled=true;btn.textContent='检查中...';
-  return fetch('/api/system/check-login',{method:'POST'}).then(async r=>{
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.detail||d.message||'检查失败');
-    const type=d.logged_in?'success':(d.browser_running?'warning':'error');
-    showStatusModal(type,d.logged_in?'登录状态正常':'尚未登录',d.message||'未能确认登录状态');
-    const session=document.getElementById('sessionStatus');
-    if(session)session.textContent=d.logged_in?'登录态正常':'尚未登录';
-    refreshStatus();
-    return d;
-  }).catch(e=>{
-    showStatusModal('error','检查登录失败',e.message||'网络请求失败');
-  }).finally(()=>{btn.textContent='检查登录';refreshStatus();});
-}
-
 function logoutBoss(){
   const btn=document.getElementById('btnLogout');
   btn.disabled=true;btn.textContent='登出中...';
@@ -2240,12 +2220,12 @@ function logoutBoss(){
 
 function startSystem(){
   document.getElementById('btnStart').disabled=true;
-  toast('正在启动浏览器…','info',1800);
-  fetch('/api/system/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+  toast('正在打开登录页…','info',1800);
+  fetch('/api/system/start?platform=boss&login=true',{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.status==='started'||d.status==='already_started'){
       refreshStatus();
-      toast(d.status==='started'?'浏览器已启动':'浏览器已在运行','success');
-      return checkLoginStatus({automatic:true});
+      showStatusModal(d.logged_in?'success':'warning',d.logged_in?'登录成功':'请登录',d.logged_in?'BOSS 直聘登录状态验证通过。':'BOSS 直聘登录页已打开，状态会由心跳自动更新。');
+      return refreshLoginHeartbeat();
     }
     else{toast('启动失败: '+(d.message||'未知'),'error');document.getElementById('btnStart').disabled=false;}
   }).catch(()=>{toast('启动失败','error');document.getElementById('btnStart').disabled=false;});
@@ -2262,13 +2242,14 @@ function doRelogin(){
     showStatusModal(d.status==='ok'?'success':'error',d.status==='ok'?'登录成功':'登录失败',d.message||'BOSS 登录流程已结束');
   }).catch(()=>{if(b){b.disabled=false;b.textContent='重新扫码登录';}showStatusModal('error','登录失败','请求失败，请稍后重试');});
 }
-function manualHeartbeat(){
-  document.getElementById('sessionStatus').textContent='检测中...';
+function refreshLoginHeartbeat(){
   fetch('/api/system/heartbeat',{method:'POST'}).then(r=>r.json()).then(d=>{
-    document.getElementById('sessionStatus').textContent=d.alive?'登录态正常':'已过期';
-    toast(d.alive?'登录态正常':'登录已过期',d.alive?'success':'error');
-  }).catch(()=>{document.getElementById('sessionStatus').textContent='检测失败';toast('检测失败','error');});
+    const logged=!!(d.platforms&&d.platforms.boss&&d.platforms.boss.logged_in);
+    document.getElementById('sessionStatus').textContent=logged?'登录态正常':'尚未登录';
+    return d;
+  }).catch(()=>{document.getElementById('sessionStatus').textContent='心跳异常';});
 }
+setInterval(()=>{if(!document.hidden)refreshLoginHeartbeat();},15000);
 
 function doSearch(){
   try{

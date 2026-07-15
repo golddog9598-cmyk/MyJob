@@ -103,9 +103,9 @@ const workflow = [
         <span class="marketing-platform-label">产品对接平台</span>
         <div class="marketing-platform-list">
           <div><strong>BOSS 直聘</strong><span>已接入</span></div>
-          <div><strong>智联招聘</strong><span>规划中</span></div>
-          <div><strong>前程无忧</strong><span>规划中</span></div>
-          <div><strong>猎聘</strong><span>规划中</span></div>
+          <div><strong>智联招聘</strong><span>已接入</span></div>
+          <div><strong>前程无忧</strong><span>已接入</span></div>
+          <div><strong>猎聘</strong><span>已接入</span></div>
         </div>
       </section>
 

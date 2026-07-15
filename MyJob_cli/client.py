@@ -2,7 +2,7 @@
 
 import os
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -44,8 +44,22 @@ def _put(path: str, json=None, timeout=120):
     return _request("PUT", path, json=json, timeout=timeout)
 
 
-def search(keyword: str, city: str = "", limit: int = 60):
-    return _post("/api/jobs/search", {"keyword": keyword, "city": city or "", "limit": limit})
+def search(
+    keyword: str,
+    city: str = "",
+    limit: int = 60,
+    platform: str = "boss",
+    welfare: str = "",
+):
+    payload = {
+        "platform": platform,
+        "keyword": keyword,
+        "city": city or "",
+        "limit": limit,
+    }
+    if welfare:
+        payload["welfare"] = welfare
+    return _post("/api/jobs/search", payload)
 
 
 def status():
@@ -56,19 +70,41 @@ def stats():
     return _get("/api/stats")
 
 
-def jobs(status_filter=None, limit=50):
-    q = f"?limit={limit}"
+def jobs(status_filter=None, limit=50, platform: str = ""):
+    params = {"limit": limit}
     if status_filter:
-        q += f"&status={status_filter}"
-    return _get(f"/api/jobs{q}")
+        params["status"] = status_filter
+    if platform:
+        params["platform"] = platform
+    return _get(f"/api/jobs?{urlencode(params)}")
 
 
-def apply_one(job_url: str):
-    return _post("/api/jobs/apply", {"job_url": job_url})
+def apply_one(job_url: str, platform: str = ""):
+    payload = {"job_url": job_url}
+    if platform:
+        payload["platform"] = platform
+    return _post("/api/jobs/apply", payload)
 
 
-def apply_batch(job_urls: list):
-    return _post("/api/jobs/apply-batch", {"job_urls": job_urls})
+def apply_batch(job_urls: list, jobs: Optional[list] = None):
+    payload = {"job_urls": job_urls}
+    if jobs is not None:
+        payload["jobs"] = jobs
+    return _post("/api/jobs/apply-batch", payload)
+
+
+def start_platform(platform: str = "boss", login: bool = False):
+    return _post(
+        f"/api/system/start?{urlencode({'platform': platform, 'login': str(login).lower()})}"
+    )
+
+
+def login_heartbeat():
+    return _post("/api/system/heartbeat")
+
+
+def logout_platform(platform: str = "boss"):
+    return _post(f"/api/system/logout?{urlencode({'platform': platform})}")
 
 
 def scan():

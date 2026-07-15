@@ -38,7 +38,7 @@ const documentSections = [
         <p class="marketing-eyebrow">产品文档</p>
         <h1>了解 MyJob 的工作方式</h1>
         <p>从创建账户到连接招聘平台，按顺序完成设置并开始管理求职流程。</p>
-        <span class="marketing-version">当前版本 V0.0.6</span>
+        <span class="marketing-version">当前版本 V0.0.8</span>
       </header>
 
       <div class="marketing-docs-layout">
@@ -51,10 +51,10 @@ const documentSections = [
         <article class="marketing-docs-content">
           <section id="quick-start">
             <h2>快速开始</h2>
-            <p>访问首页右上角的注册入口，完成账户创建并登录。进入工作台后，先检查招聘平台登录状态，再配置岗位和城市条件。</p>
+            <p>访问首页右上角的注册入口，完成账户创建并登录。进入工作台后，从顶部状态卡选择招聘平台，再配置岗位和城市条件。</p>
             <ol class="marketing-docs-steps">
               <li><strong>注册并登录 MyJob</strong><span>业务功能只对已登录用户开放。</span></li>
-              <li><strong>连接 BOSS 直聘</strong><span>启动浏览器并在 BOSS 直聘完成登录。</span></li>
+              <li><strong>选择招聘平台</strong><span>从 BOSS 直聘、智联招聘、猎聘或前程无忧中选择并登录。</span></li>
               <li><strong>设置求职目标</strong><span>选择岗位方向、目标城市和筛选条件。</span></li>
               <li><strong>检查后再执行</strong><span>确认岗位、沟通内容和简历版本符合预期。</span></li>
             </ol>
@@ -71,8 +71,9 @@ const documentSections = [
 
           <section id="platforms">
             <h2>连接招聘平台</h2>
-            <p>当前已接入 BOSS 直聘。智联招聘、前程无忧和猎聘处于规划阶段，将在后续版本逐步接入。</p>
-            <p>使用 BOSS 直聘时，点击工作台的启动浏览器按钮，等待页面打开并完成登录。随后使用检查登录确认状态，再开始岗位操作。</p>
+            <p>当前已接入 BOSS 直聘、智联招聘、猎聘和前程无忧。先在工作台顶部状态卡选择平台，再点击启动登录并在可见页面完成登录。工作台每 15 秒通过轻量心跳自动验证四个平台，用户无需手动检查。</p>
+            <p>平台登录态按域名隔离，登出一个平台不会清除其他平台会话。遇到验证码、安全验证或操作频繁提示时，请停止自动化并在浏览器中人工处理。</p>
+            <p>BOSS 直聘支持消息同步和招聘者活跃度筛选。智联招聘、猎聘和前程无忧当前支持岗位搜索、筛选、入库和单岗位投递，持续消息同步将在后续版本完善。</p>
           </section>
 
           <section id="job-search">

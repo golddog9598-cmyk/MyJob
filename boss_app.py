@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-BOSS直聘自动化控制台 —— FastAPI 后端
-提供 REST API + WebSocket + 后台监控循环。
+MyJob 多招聘平台自动化控制台 FastAPI 后端。
+提供 REST API、WebSocket、浏览器自动化和后台监控循环。
 用法: python boss_app.py --port 8000
 """
 
@@ -90,6 +90,13 @@ from boss_state import (
     upsert_campaign_job,
     set_campaign_job_status,
     list_campaign_jobs,
+    increment_daily_stat,
+)
+from job_platforms import (
+    normalize_job_url,
+    normalize_platform,
+    platform_catalog,
+    platform_label,
 )
 from boss_replier import generate_greeting
 from job_campaign import pipeline_status, rank_jobs, validate_campaign_config
@@ -110,7 +117,7 @@ from resume_documents import (
 _docs_enabled = os.getenv("MYJOB_ENABLE_DOCS", "false").lower() == "true"
 app = FastAPI(
     title="MyJob",
-    version="V0.0.6",
+    version="V0.0.8",
     docs_url="/api/docs" if _docs_enabled else None,
     redoc_url=None,
     openapi_url="/api/openapi.json" if _docs_enabled else None,
@@ -954,22 +961,21 @@ DISTRICTS = {
 }
 
 
-def _normalize_job_url(url: str) -> str:
-    url = (url or "").strip()
-    if not url:
-        return ""
-    return urljoin("https://www.zhipin.com", url)
+def _normalize_job_url(url: str, platform: str = "boss") -> str:
+    return normalize_job_url(platform, url)
 
 
 def _search_job_payload(job: dict, application: Optional[dict] = None) -> dict:
     """统一搜索结果和数据库记录的字段名，方便前端直接渲染。"""
     application = application or {}
+    platform = application.get("platform") or job.get("platform") or "boss"
     return {
         "id": application.get("id"),
+        "platform": platform,
         "job_title": application.get("job_title") or job.get("title", ""),
         "company": application.get("company") or job.get("company", ""),
         "salary": application.get("salary") or job.get("salary", ""),
-        "job_url": application.get("job_url") or _normalize_job_url(job.get("url", "")),
+        "job_url": application.get("job_url") or _normalize_job_url(job.get("url", ""), platform),
         "city": application.get("city") or job.get("city", ""),
         "experience": application.get("experience") or job.get("experience", ""),
         "education": application.get("education") or job.get("education", ""),
@@ -1078,6 +1084,7 @@ def _load_title_blacklist() -> tuple:
 
 
 class SearchRequest(BaseModel):
+    platform: str = "boss"
     keyword: str = "AI Agent"
     city: str = ""
     welfare: Optional[str] = None
@@ -1105,6 +1112,7 @@ class SearchRequest(BaseModel):
 
 class ApplyRequest(BaseModel):
     job_url: str
+    platform: Optional[str] = None
     greeting: Optional[str] = None
     company_name: Optional[str] = None
     company_id: Optional[str] = None
@@ -1531,8 +1539,22 @@ def index():
 @app.get("/api/status")
 def get_status():
     browser_ok = automation is not None and automation.page is not None
+    platform_manager = getattr(automation, "platforms", None) if browser_ok else None
+    runtime = platform_manager.status() if platform_manager else {}
     return {
         "browser_running": browser_ok,
+        "active_platform": runtime.get("active_platform", "boss"),
+        "platforms": runtime.get(
+            "platforms",
+            {
+                item["id"]: {
+                    "label": item["label"],
+                    "page_open": False,
+                    "logged_in": False,
+                }
+                for item in platform_catalog()
+            },
+        ),
         "auto_reply_enabled": get_setting("auto_reply_enabled", "false") == "true",
         "monitor_running": monitor_task is not None and not monitor_task.done(),
         "monitor_paused": monitor_paused,
@@ -1540,6 +1562,12 @@ def get_status():
         "active_conversations": len(list_active_conversations()),
         "daily_stats": get_daily_stats(),
     }
+
+
+@app.get("/api/platforms")
+def get_platforms():
+    """Return the stable platform ids used by the API, Vue app and CLI."""
+    return {"platforms": platform_catalog()}
 
 
 @app.get("/api/stats")
@@ -1606,10 +1634,15 @@ def doctor():
         ai_key_ok = False
 
     browser_ok = automation is not None and automation.page is not None
+    boss_logged_in = bool(
+        browser_ok
+        and getattr(automation, "platforms", None)
+        and automation.platforms.login_status.get("boss")
+    )
     checks = {
         "python": {"ok": True, "detail": _sys.version.split()[0]},
         "browser": {"ok": browser_ok, "detail": "运行中" if browser_ok else "未启动"},
-        "boss_login": {"ok": browser_ok, "detail": "已登录" if browser_ok else "未登录"},
+        "boss_login": {"ok": boss_logged_in, "detail": "已登录" if boss_logged_in else "未登录"},
         "ai_key": {"ok": ai_key_ok, "detail": "已配置" if ai_key_ok else "未配置"},
         "today_applications": get_today_application_count(),
         "pending_jobs": get_today_pending_count(),
@@ -1619,10 +1652,25 @@ def doctor():
 
 
 @app.post("/api/system/start")
-async def start_automation():
+async def start_automation(platform: str = "boss", login: bool = False):
     global automation
+    try:
+        target_platform = normalize_platform(platform)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     if automation is not None and automation.page is not None:
-        return {"status": "already_started"}
+        if getattr(automation, "platforms", None):
+            try:
+                opened = await _run_pw(
+                    automation.platforms.open_platform,
+                    target_platform,
+                    login,
+                )
+            except Exception as exc:
+                return {"status": "error", "message": f"打开{platform_label(target_platform)}失败: {exc}"}
+            return {**opened, "status": "already_started"}
+        return {"status": "already_started", "platform": target_platform}
 
     # 在后台线程启动浏览器，避免阻塞事件循环
     def _do_start():
@@ -1647,8 +1695,19 @@ async def start_automation():
         automation = None
         return {"status": "error", "message": "浏览器启动后页面为空，请重试"}
 
-    await broadcast_ws({"type": "system", "event": "started"})
-    return {"status": "started"}
+    opened = {}
+    if getattr(automation, "platforms", None):
+        try:
+            opened = await _run_pw(
+                automation.platforms.open_platform,
+                target_platform,
+                login,
+            )
+        except Exception as exc:
+            return {"status": "error", "message": f"打开{platform_label(target_platform)}失败: {exc}"}
+
+    await broadcast_ws({"type": "system", "event": "started", "platform": target_platform})
+    return {**opened, "status": "started", "platform": target_platform}
 
 
 @app.post("/api/system/stop")
@@ -1672,15 +1731,47 @@ async def stop_automation():
 
 
 @app.post("/api/system/check-login")
-async def check_login_status():
-    """主动验证 BOSS 登录态；未登录属于正常状态，始终返回清晰结果。"""
+async def check_login_status(platform: str = "boss"):
+    """主动验证指定平台登录态；未登录属于正常状态。"""
     global monitor_task, monitor_paused
+    try:
+        target_platform = normalize_platform(platform)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not automation or automation.page is None:
         return {
             "browser_running": False,
+            "platform": target_platform,
             "logged_in": False,
-            "message": "浏览器尚未启动，请先点击“启动浏览器”",
+            "message": "登录服务尚未启动，请先点击“启动登录”",
         }
+
+    if target_platform != "boss":
+        if not getattr(automation, "platforms", None):
+            return {
+                "browser_running": True,
+                "platform": target_platform,
+                "logged_in": False,
+                "message": "招聘平台管理器尚未就绪，请停止后重新启动登录",
+            }
+        try:
+            result = await _run_pw(automation.platforms.check_login, target_platform, True)
+        except Exception as exc:
+            return {
+                "browser_running": True,
+                "platform": target_platform,
+                "logged_in": False,
+                "message": f"登录状态检查失败：{exc}",
+            }
+        await broadcast_ws(
+            {
+                "type": "system",
+                "event": "login_checked",
+                "platform": target_platform,
+                "logged_in": result["logged_in"],
+            }
+        )
+        return result
 
     try:
         logged_in = bool(await _run_pw(automation.check_login_verified))
@@ -1706,13 +1797,21 @@ async def check_login_status():
             monitor_task = None
         message = "请登录"
 
+    if getattr(automation, "platforms", None):
+        automation.platforms.active_platform = "boss"
+        automation.platforms.login_status["boss"] = logged_in
+
     try:
         current_url = await _run_pw(lambda: automation.page.url)
     except Exception:
         current_url = ""
-    await broadcast_ws({"type": "system", "event": "login_checked", "logged_in": logged_in})
+    await broadcast_ws(
+        {"type": "system", "event": "login_checked", "platform": "boss", "logged_in": logged_in}
+    )
     return {
         "browser_running": True,
+        "platform": "boss",
+        "label": platform_label("boss"),
         "logged_in": logged_in,
         "message": message,
         "url": current_url,
@@ -1720,16 +1819,45 @@ async def check_login_status():
 
 
 @app.post("/api/system/logout")
-async def logout_boss():
-    """清除 BOSS 会话但保留浏览器和后台服务运行。"""
+async def logout_boss(platform: str = "boss"):
+    """清除指定平台会话，但保留浏览器和其他平台登录态。"""
     global monitor_task, monitor_paused
+    try:
+        target_platform = normalize_platform(platform)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not automation or automation.page is None:
         return {
             "status": "error",
             "browser_running": False,
+            "platform": target_platform,
             "logged_in": False,
             "message": "浏览器尚未启动，当前无需登出",
         }
+
+    if target_platform != "boss":
+        if not getattr(automation, "platforms", None):
+            return {
+                "status": "error",
+                "browser_running": True,
+                "platform": target_platform,
+                "logged_in": False,
+                "message": "招聘平台管理器尚未就绪，请停止后重新启动登录",
+            }
+        try:
+            result = await _run_pw(automation.platforms.logout, target_platform)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "browser_running": True,
+                "platform": target_platform,
+                "logged_in": True,
+                "message": f"登出失败：{exc}",
+            }
+        await broadcast_ws(
+            {"type": "system", "event": "logged_out", "platform": target_platform, "logged_in": False}
+        )
+        return result
 
     if monitor_task and not monitor_task.done():
         monitor_task.cancel()
@@ -1752,10 +1880,15 @@ async def logout_boss():
             "message": f"登出失败：{error_message or '未能完全清除登录状态'}",
         }
 
+    if getattr(automation, "platforms", None):
+        automation.platforms.active_platform = "boss"
+        automation.platforms.login_status["boss"] = False
+
     await broadcast_ws({"type": "system", "event": "logged_out", "logged_in": False})
     return {
         "status": "ok",
         "browser_running": True,
+        "platform": "boss",
         "logged_in": False,
         "message": "已退出 BOSS 登录，浏览器仍保持运行",
     }
@@ -1800,14 +1933,67 @@ async def relogin():
 
 
 @app.post("/api/system/heartbeat")
-async def manual_heartbeat():
-    """手动心跳保活。"""
+async def platform_login_heartbeat():
+    """Lightweight four-platform login heartbeat without navigation."""
+    global monitor_task, monitor_paused
     if not automation or automation.page is None:
-        raise HTTPException(status_code=503, detail="浏览器未启动")
-    alive = await _run_pw(automation.heartbeat)
-    if not alive:
-        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
-    return {"status": "ok", "alive": True}
+        return {
+            "status": "ok",
+            "browser_running": False,
+            "active_platform": "boss",
+            "platforms": {
+                item["id"]: {
+                    "label": item["label"],
+                    "page_open": False,
+                    "logged_in": False,
+                }
+                for item in platform_catalog()
+            },
+            "changed": [],
+        }
+
+    manager = getattr(automation, "platforms", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="招聘平台管理器尚未就绪")
+
+    previous = manager.status()
+    runtime = await _run_pw(manager.login_heartbeat)
+    previous_platforms = previous.get("platforms", {})
+    current_platforms = runtime.get("platforms", {})
+    changed = [
+        platform
+        for platform in current_platforms
+        if bool(previous_platforms.get(platform, {}).get("logged_in"))
+        != bool(current_platforms[platform].get("logged_in"))
+    ]
+
+    boss_was_logged_in = bool(previous_platforms.get("boss", {}).get("logged_in"))
+    boss_logged_in = bool(current_platforms.get("boss", {}).get("logged_in"))
+    if boss_logged_in:
+        if not boss_was_logged_in:
+            monitor_paused = False
+            try:
+                await _run_pw(automation._save_state)
+            except Exception:
+                pass
+        if not monitor_paused and (monitor_task is None or monitor_task.done()):
+            monitor_task = asyncio.create_task(chat_monitor_loop())
+    else:
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
+            monitor_task = None
+        if boss_was_logged_in:
+            monitor_paused = True
+
+    payload = {
+        "status": "ok",
+        "browser_running": True,
+        **runtime,
+        "changed": changed,
+    }
+    if changed:
+        await broadcast_ws({"type": "platform_login_status", **payload})
+    return payload
 
 
 @app.post("/api/monitor/pause")
@@ -1941,23 +2127,41 @@ async def selectors_status():
 
 
 @app.get("/api/jobs")
-def list_jobs(status: Optional[str] = None, limit: int = 50, offset: int = 0):
+def list_jobs(
+    status: Optional[str] = None,
+    platform: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
     safe_limit = max(1, min(int(limit), 100))
     safe_offset = max(0, int(offset))
-    jobs = list_applications(status, safe_limit, safe_offset)
+    target_platform = None
+    if platform:
+        try:
+            target_platform = normalize_platform(platform)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    jobs = list_applications(status, safe_limit, safe_offset, target_platform)
     return {
         "jobs": jobs,
-        "total": count_applications(status),
+        "total": count_applications(status, target_platform),
         "limit": safe_limit,
         "offset": safe_offset,
+        "platform": target_platform,
     }
 
 
 @app.post("/api/jobs/search")
 async def search_jobs(req: SearchRequest):
     global monitor_paused
+    try:
+        target_platform = normalize_platform(req.platform)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not automation or automation.page is None:
-        raise HTTPException(status_code=503, detail="浏览器未启动，请先到设置Tab点击「启动浏览器」")
+        raise HTTPException(status_code=503, detail="登录服务未启动，请先点击顶部「启动登录」")
+    if target_platform != "boss" and not getattr(automation, "platforms", None):
+        raise HTTPException(status_code=503, detail="招聘平台管理器尚未就绪，请停止后重新启动登录")
     was_paused = monitor_paused
     monitor_paused = True
     try:
@@ -1982,33 +2186,54 @@ async def search_jobs(req: SearchRequest):
         stage_code = req.stage
 
         try:
-            jobs = await _run_pw(
-                automation.search,
-                req.keyword, city_code,
-                job_type=job_type_code,
-                salary=salary_code,
-                experience=req.experience,
-                edu=edu_code,
-                scale=req.scale,
-                stage=stage_code,
-                area_business=req.area_business or "",
-            )
+            if target_platform == "boss":
+                jobs = await _run_pw(
+                    automation.search,
+                    req.keyword, city_code,
+                    job_type=job_type_code,
+                    salary=salary_code,
+                    experience=req.experience,
+                    edu=edu_code,
+                    scale=req.scale,
+                    stage=stage_code,
+                    area_business=req.area_business or "",
+                )
+            else:
+                jobs = await _run_pw(
+                    automation.platforms.search,
+                    target_platform,
+                    req.keyword,
+                    req.city or get_setting("default_city", "全国"),
+                    salary=salary_code,
+                    experience=req.experience,
+                    degree=edu_code,
+                    job_type=job_type_code,
+                    limit=req.limit,
+                )
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"搜索失败: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"{platform_label(target_platform)}搜索失败: {e}",
+            )
 
         # 福利筛选
-        if req.welfare:
+        if req.welfare and target_platform == "boss":
             welfare_kw = [w.strip() for w in req.welfare.split(",") if w.strip()]
             jobs = automation._filter_by_welfare(jobs, welfare_kw)
+
+        for job in jobs:
+            job["platform"] = target_platform
 
         # BUG-027 修复: 在入库前, 用去重 + HR 活跃度过滤低质岗位
         dedup = req.dedup_company if req.dedup_company is not None else (
             get_setting("dedup_company_by_default", "true") == "true"
         )
-        filter_inactive = req.filter_inactive_hr if req.filter_inactive_hr is not None else (
-            get_setting("filter_inactive_hr", "true") == "true"
+        filter_inactive = target_platform == "boss" and (
+            req.filter_inactive_hr if req.filter_inactive_hr is not None else (
+                get_setting("filter_inactive_hr", "true") == "true"
+            )
         )
         max_inactive = req.max_hr_inactive_days or int(get_setting("max_hr_inactive_days", "7"))
 
@@ -2049,7 +2274,7 @@ async def search_jobs(req: SearchRequest):
             if _title_hit_blacklist(t, j.get("description", ""), blacklist):
                 skipped_keyword += 1
                 # 关键词命中 → 入库为 filtered，方便用户查看
-                j["url"] = _normalize_job_url(j.get("url", ""))
+                j["url"] = _normalize_job_url(j.get("url", ""), target_platform)
                 if j.get("url"):
                     _save_filtered_job(j)
                 continue
@@ -2065,7 +2290,7 @@ async def search_jobs(req: SearchRequest):
         result_jobs = []
         restored_count = 0
         for j in jobs:
-            j["url"] = _normalize_job_url(j.get("url", ""))
+            j["url"] = _normalize_job_url(j.get("url", ""), target_platform)
             if j.get("url"):
                 existing = get_application_by_url(j["url"])
                 if existing:
@@ -2092,11 +2317,13 @@ async def search_jobs(req: SearchRequest):
                 "type": "search_complete",
                 "keyword": req.keyword,
                 "city": req.city,
+                "platform": target_platform,
                 "found": len(jobs),
             }
         )
         return {
             "jobs_found": len(jobs),
+            "platform": target_platform,
             "saved": len(saved_ids),
             "restored_from_filtered": restored_count,
             "skipped_company": skipped_company,
@@ -2129,40 +2356,118 @@ async def skip_job(job_id: int):
 # ══════════════════════════════════════
 
 
-@app.post("/api/jobs/apply")
-async def apply_to_job(req: ApplyRequest):
+def _infer_platform_for_application(job_url: str, requested: Optional[str] = None) -> tuple[str, Optional[dict]]:
+    raw_url = (job_url or "").strip()
+    application = get_application_by_url(raw_url) if raw_url else None
+    candidate = requested or (application or {}).get("platform")
+    if not candidate:
+        lowered = raw_url.lower()
+        if "zhaopin.com" in lowered:
+            candidate = "zhilian"
+        elif "liepin.com" in lowered:
+            candidate = "liepin"
+        elif "51job.com" in lowered:
+            candidate = "job51"
+        else:
+            candidate = "boss"
+    try:
+        platform = normalize_platform(candidate)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    normalized_url = _normalize_job_url(raw_url, platform)
+    if normalized_url != raw_url:
+        application = get_application_by_url(normalized_url) or application
+    return platform, application
+
+
+def _prepare_greeting(job: Optional[dict], greeting: Optional[str]) -> str:
+    if greeting:
+        return greeting
+    title = job["job_title"] if job else "相关岗位"
+    company = job["company"] if job else "贵公司"
+    jd_text = job["description"] if job and job.get("description") else ""
+    style = get_setting("ai_reply_style", "professional")
+    smart = get_setting("greeting_mode", "template") == "smart"
+    prepared = generate_greeting(
+        title, company, style=style, jd_text=jd_text, smart=smart
+    )
+    if smart:
+        print(f"  🤖 智能招呼语已生成 ({len(prepared)}字): {prepared[:50]}...")
+    return prepared
+
+
+async def _apply_single(req: ApplyRequest) -> dict:
     if not automation:
         raise HTTPException(status_code=503, detail="浏览器未启动")
 
+    platform, job = _infer_platform_for_application(req.job_url, req.platform)
+    if platform != "boss" and not getattr(automation, "platforms", None):
+        raise HTTPException(status_code=503, detail="招聘平台管理器尚未就绪，请停止后重新启动登录")
+
+    job_url = _normalize_job_url(req.job_url, platform)
     daily_limit = int(get_setting("daily_apply_limit", "15"))
     if get_today_application_count() >= daily_limit:
         raise HTTPException(status_code=429, detail="已达到今日投递上限")
 
-    greeting = req.greeting
-    if not greeting:
-        job = get_application_by_url(req.job_url)
-        title = job["job_title"] if job else "相关岗位"
-        company = job["company"] if job else "贵公司"
-        jd_text = job["description"] if job and job.get("description") else ""
-        style = get_setting("ai_reply_style", "professional")
-        smart = get_setting("greeting_mode", "template") == "smart"
-        greeting = generate_greeting(
-            title, company, style=style, jd_text=jd_text, smart=smart
-        )
-        if smart:
-            print(f"  🤖 智能招呼语已生成 ({len(greeting)}字): {greeting[:50]}...")
+    greeting = _prepare_greeting(job, req.greeting)
 
-    # 在后台线程运行（Playwright 是同步的）
-    result = await _run_pw(automation.apply_to_job, req.job_url, greeting)
+    if platform == "boss":
+        result = await _run_pw(
+            automation.apply_to_job,
+            job_url,
+            greeting,
+            company_name=req.company_name or (job or {}).get("company", ""),
+            company_id=req.company_id or (job or {}).get("company_id", ""),
+            dedup_company=req.dedup_company,
+            hr_active_days=req.hr_active_days,
+            hr_active_label=req.hr_active_label or "",
+            filter_inactive_hr=req.filter_inactive_hr,
+        )
+    else:
+        result = await _run_pw(
+            automation.platforms.apply_to_job,
+            platform,
+            job_url,
+            greeting,
+        )
+        if result.get("success"):
+            application = job or get_application_by_url(job_url)
+            if application is None:
+                app_id = add_application(
+                    {
+                        "platform": platform,
+                        "title": "",
+                        "company": req.company_name or "",
+                        "url": job_url,
+                    }
+                )
+                application = get_application(app_id) if app_id else None
+            if application:
+                if result.get("greeting_sent"):
+                    update_application_status(application["id"], "applied", greeting)
+                else:
+                    update_application_status(application["id"], "applied")
+                result["application_id"] = application["id"]
+            if not result.get("already_applied"):
+                increment_daily_stat("applications_sent")
+
+    result.setdefault("platform", platform)
+    result.setdefault("platform_label", platform_label(platform))
     if result.get("success"):
         await broadcast_ws(
             {
                 "type": "apply_complete",
-                "job_url": req.job_url,
+                "platform": platform,
+                "job_url": job_url,
                 "job_id": result.get("application_id"),
             }
         )
     return result
+
+
+@app.post("/api/jobs/apply")
+async def apply_to_job(req: ApplyRequest):
+    return await _apply_single(req)
 
 
 @app.post("/api/jobs/apply-batch")
@@ -2172,9 +2477,49 @@ async def apply_batch(req: ApplyBatchRequest):
 
     daily_limit = int(get_setting("daily_apply_limit", "15"))
     remaining = daily_limit - get_today_application_count()
-    urls = req.job_urls[: max(1, remaining)]
-
-    results = await _run_pw(automation.apply_batch, urls, req.greeting)
+    urls = req.job_urls[: max(0, remaining)]
+    metadata = {
+        str(item.get("url") or item.get("job_url") or ""): item
+        for item in (req.jobs or [])
+        if item.get("url") or item.get("job_url")
+    }
+    results = []
+    batch_greeting = req.greeting
+    if not batch_greeting and urls:
+        _first_platform, first_job = _infer_platform_for_application(
+            urls[0], metadata.get(urls[0], {}).get("platform")
+        )
+        batch_greeting = _prepare_greeting(first_job, None)
+    min_delay = max(0, int(get_setting("batch_delay_min_sec", "30")))
+    max_delay = max(min_delay, int(get_setting("batch_delay_max_sec", "90")))
+    for index, job_url in enumerate(urls):
+        if index:
+            await asyncio.sleep(random.uniform(min_delay, max_delay))
+        item = metadata.get(job_url, {})
+        try:
+            result = await _apply_single(
+                ApplyRequest(
+                    job_url=job_url,
+                    platform=item.get("platform"),
+                    greeting=batch_greeting,
+                    company_name=item.get("company"),
+                    company_id=item.get("company_id"),
+                    hr_active_days=item.get("hr_active_days"),
+                    hr_active_label=item.get("hr_active_label"),
+                )
+            )
+        except HTTPException as exc:
+            result = {"success": False, "message": str(exc.detail), "job_url": job_url}
+            results.append(result)
+            if exc.status_code == 429:
+                break
+            continue
+        result["_input"] = {
+            key: item.get(key)
+            for key in ("title", "company", "url", "platform")
+            if item.get(key)
+        }
+        results.append(result)
     await broadcast_ws(
         {
             "type": "batch_complete",
@@ -2189,7 +2534,7 @@ async def apply_batch(req: ApplyBatchRequest):
 async def scan_current_page():
     """扫描当前BOSS搜索结果页面，提取所有可见岗位，保存到数据库并返回。"""
     if not automation or automation.page is None:
-        raise HTTPException(status_code=503, detail="浏览器未启动，请先到设置Tab点击「启动浏览器」")
+        raise HTTPException(status_code=503, detail="登录服务未启动，请先点击顶部「启动登录」")
 
     try:
         jobs = await _run_pw(automation.scan_current_page)
@@ -3650,7 +3995,7 @@ def main():
         uvicorn_options.update(ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
         scheme = "https"
 
-    print(f"\n🚀 MyJob V0.0.6: {scheme}://{args.host}:{args.port}")
+    print(f"\n🚀 MyJob V0.0.8: {scheme}://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, **uvicorn_options)
 
 

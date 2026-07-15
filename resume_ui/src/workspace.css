@@ -161,3 +161,19 @@ a{color:inherit}
 :root[data-theme="light"] .vre-tailored-list a{background:#e1f3f7;color:#126f86}
 
 @media(max-width:980px){.workspace-shell{padding:0}.app-sidebar{inset:0 auto 0 0;border-radius:0}.workspace-body{margin-left:0}.app-topbar{top:0;border-width:0 0 1px;border-radius:0}.surface-block:hover,.metric-strip:hover,.search-workbench:hover{transform:none}}
+
+/* Four-platform login heartbeat cards occupy the topbar's central status lane. */
+.app-topbar{gap:12px}
+.runtime-summary{flex:0 0 auto;margin-right:0}
+.topbar-platform-status{flex:1 1 430px;margin:0 auto}
+.browser-actions{flex:0 0 auto}
+.platform-capability-note{color:var(--app-muted);font-size:10px;line-height:1.45}
+.platform-source{display:inline-flex;align-items:center;min-height:24px;padding:0 8px;border:1px solid var(--app-line);border-radius:999px;background:var(--app-surface-2);color:var(--app-muted);font-size:9px;font-weight:700;white-space:nowrap}
+.platform-source[data-platform="boss"]{border-color:rgba(22,141,169,.38);color:var(--app-accent-strong)}
+.job-table{min-width:960px}
+.mobile-platform-status{display:none}
+
+:root[data-theme="light"] .platform-source{background:#eef4f5;color:#506872}
+
+@media(max-width:1280px) and (min-width:981px){.runtime-summary .desktop-only{display:none!important}.runtime-summary>span:first-child,.browser-actions button{font-size:0}.runtime-summary svg,.browser-actions button svg{font-size:15px}.browser-actions button{width:34px;padding:0;justify-content:center}.topbar-platform-status{flex-basis:320px}}
+@media(max-width:980px){.topbar-platform-status{display:none!important}.mobile-runtime-actions{grid-template-columns:repeat(3,1fr);background:var(--app-surface)}.mobile-platform-status{grid-column:1/-1;display:block;padding:9px 12px 11px;border-bottom:1px solid var(--app-line-soft)}.mobile-platform-status>.platform-login-status{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.mobile-runtime-actions>button{min-height:40px}.job-table{min-width:900px}}

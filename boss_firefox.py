@@ -458,6 +458,7 @@ class BossScraper:
         self.headless = headless
         self._pw = self._br = self._ctx = None
         self.page = None
+        self.platforms = None
 
     def start(self):
         self._pw = sync_playwright().start()
@@ -493,6 +494,9 @@ class BossScraper:
         self._ctx.add_init_script(ANTI_DETECT)
         self.page = self._ctx.new_page()
         self.page.set_default_timeout(30000)
+        from job_platforms import PlatformManager
+
+        self.platforms = PlatformManager(self)
 
     def close(self):
         if self._ctx:
@@ -507,6 +511,7 @@ class BossScraper:
                 pass
         if self._pw:
             self._pw.stop()
+        self.platforms = None
 
     def _body_text(self, limit=1500):
         try:

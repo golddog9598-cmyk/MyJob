@@ -48,7 +48,7 @@ def test_check_login_without_browser(monkeypatch):
 
     assert result["browser_running"] is False
     assert result["logged_in"] is False
-    assert "启动浏览器" in result["message"]
+    assert "启动登录" in result["message"]
 
 
 def test_check_login_starts_monitor_only_after_verified(monkeypatch):
@@ -130,17 +130,15 @@ def test_logout_clears_session_and_keeps_browser(monkeypatch):
     assert boss_app.monitor_paused is True
 
 
-def test_dashboard_has_new_controls_and_no_embedded_panel():
+def test_legacy_dashboard_uses_login_heartbeat_without_manual_check():
     html = (Path(__file__).parents[1] / "static" / "dashboard.html").read_text(encoding="utf-8")
 
-    start = html.index('id="btnStart"')
-    check = html.index('id="btnCheckLogin"')
-    logout = html.index('id="btnLogout"')
-    stop = html.index('id="btnStop"')
-    assert start < check < logout < stop
-    assert "/api/system/check-login" in html
+    assert 'id="btnStart"' in html
+    assert "启动登录" in html
+    assert 'id="btnCheckLogin"' not in html
+    assert "checkLoginStatus" not in html
+    assert "/api/system/heartbeat" in html
     assert "/api/system/logout" in html
-    assert "return checkLoginStatus({automatic:true})" in html
     assert "showStatusModal" in html
     assert "overlay.querySelector('[data-action=\"close\"]').focus()" not in html
     assert ".status-result-modal .confirm-actions .btn" in html

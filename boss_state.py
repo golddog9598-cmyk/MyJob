@@ -31,6 +31,7 @@ def init_db():
     db.executescript("""
         CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL DEFAULT 'boss',
             job_title TEXT NOT NULL,
             company TEXT,
             salary TEXT,
@@ -96,6 +97,10 @@ def init_db():
             auto_replies_sent INTEGER DEFAULT 0
         );
     """)
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN platform TEXT NOT NULL DEFAULT 'boss'")
+    except sqlite3.OperationalError:
+        pass
     try:
         db.execute("ALTER TABLE messages ADD COLUMN delivery_status TEXT")
     except sqlite3.OperationalError:
@@ -610,11 +615,12 @@ def add_application(job: dict) -> int:
         hr_active_days = -1
     cur = db.execute(
         """INSERT OR IGNORE INTO applications
-           (job_title, company, salary, job_url, city, experience, education,
+           (platform, job_title, company, salary, job_url, city, experience, education,
             hr_name, hr_title, description,
             company_id, brand_name, hr_active_label, hr_active_days)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
+            job.get("platform", "boss") or "boss",
             job.get("title", ""),
             job.get("company", ""),
             job.get("salary", ""),
@@ -661,6 +667,7 @@ def get_application_by_url(url: str) -> Optional[dict]:
 def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
     """用本次搜索结果刷新已有岗位；空值不覆盖旧值。"""
     fields = {
+        "platform": job.get("platform", ""),
         "job_title": job.get("title", ""),
         "company": job.get("company", ""),
         "salary": job.get("salary", ""),
@@ -689,29 +696,44 @@ def update_application_from_job(app_id: int, job: dict) -> Optional[dict]:
     return get_application(app_id)
 
 
-def list_applications(status: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[dict]:
+def list_applications(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    platform: Optional[str] = None,
+) -> List[dict]:
     db = get_db()
     safe_limit = max(1, min(int(limit), 300))
     safe_offset = max(0, int(offset))
+    clauses = []
+    params: list[Any] = []
     if status:
-        rows = db.execute(
-            "SELECT * FROM applications WHERE status=? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (status, safe_limit, safe_offset),
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT * FROM applications ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (safe_limit, safe_offset),
-        ).fetchall()
+        clauses.append("status=?")
+        params.append(status)
+    if platform:
+        clauses.append("platform=?")
+        params.append(platform)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.extend([safe_limit, safe_offset])
+    rows = db.execute(
+        f"SELECT * FROM applications{where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        params,
+    ).fetchall()
     return _rows_to_list(rows)
 
 
-def count_applications(status: Optional[str] = None) -> int:
+def count_applications(status: Optional[str] = None, platform: Optional[str] = None) -> int:
     db = get_db()
+    clauses = []
+    params = []
     if status:
-        row = db.execute("SELECT COUNT(*) AS cnt FROM applications WHERE status=?", (status,)).fetchone()
-    else:
-        row = db.execute("SELECT COUNT(*) AS cnt FROM applications").fetchone()
+        clauses.append("status=?")
+        params.append(status)
+    if platform:
+        clauses.append("platform=?")
+        params.append(platform)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    row = db.execute(f"SELECT COUNT(*) AS cnt FROM applications{where}", params).fetchone()
     return int(row["cnt"] if row else 0)
 
 
@@ -734,10 +756,16 @@ def update_application_status(app_id: int, status: str, greeting_text: Optional[
 def get_today_application_count() -> int:
     row = (
         get_db()
-        .execute("SELECT COUNT(*) as cnt FROM applications WHERE date(greeting_sent_at)=date('now','localtime')")
+        .execute(
+            """SELECT
+                (SELECT COUNT(*) FROM applications
+                 WHERE date(greeting_sent_at)=date('now','localtime')) AS recorded,
+                COALESCE((SELECT applications_sent FROM daily_stats
+                          WHERE date=date('now','localtime')), 0) AS stats_count"""
+        )
         .fetchone()
     )
-    return row["cnt"] if row else 0
+    return max(int(row["recorded"] or 0), int(row["stats_count"] or 0)) if row else 0
 
 
 def get_today_pending_count() -> int:

@@ -11,7 +11,7 @@ from . import client, output
 
 @click.group()
 def main():
-    """MyJob - 求职自动化平台 V0.0.6
+    """MyJob - 求职自动化平台 V0.0.8
 
     命令返回结构化 JSON 到 stdout，Agent 友好。
     """
@@ -20,7 +20,7 @@ def main():
 # ── 版本 ──
 @main.command("version")
 def version_cmd():
-    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.6"}))
+    output.emit(output.ok("version", data={"name": "MyJob", "version": "V0.0.8"}))
 
 
 # ── Schema：AI Agent 工具描述 ──
@@ -36,14 +36,12 @@ def schema_cmd():
 @main.command("search")
 @click.argument("keyword")
 @click.option("--city", default="", help="城市名（空则使用设置中的默认城市）")
+@click.option("--platform", type=click.Choice(["boss", "zhilian", "liepin", "job51"]), default="boss", show_default=True, help="招聘平台")
 @click.option("--welfare", default=None, help="福利筛选 如 双休,五险一金")
 @click.option("--count", type=int, default=60, help="返回条数上限")
-def search_cmd(keyword, city, welfare, count):
-    """搜索BOSS直聘岗位。"""
-    payload = {"keyword": keyword, "city": city or "", "limit": count}
-    if welfare:
-        payload["welfare"] = welfare
-    resp = client.search(keyword, city, count)
+def search_cmd(keyword, city, platform, welfare, count):
+    """搜索指定招聘平台岗位。"""
+    resp = client.search(keyword, city, count, platform=platform, welfare=welfare or "")
     result = output.ok_or_fail(resp, "search")
     output.emit(result)
 
@@ -67,9 +65,10 @@ def stats_cmd():
 # ── 岗位列表 ──
 @main.command("jobs")
 @click.option("--status", "filter_status", default=None, help="pending / applied / replied")
+@click.option("--platform", type=click.Choice(["boss", "zhilian", "liepin", "job51"]), default="", help="按招聘平台筛选")
 @click.option("--limit", type=int, default=50)
-def jobs_cmd(filter_status, limit):
-    resp = client.jobs(filter_status, limit)
+def jobs_cmd(filter_status, platform, limit):
+    resp = client.jobs(filter_status, limit, platform)
     result = output.ok_or_fail(resp, "jobs")
     output.emit(result)
 
@@ -77,8 +76,9 @@ def jobs_cmd(filter_status, limit):
 # ── 投递单个 ──
 @main.command("apply")
 @click.argument("job_url")
-def apply_cmd(job_url):
-    resp = client.apply_one(job_url)
+@click.option("--platform", type=click.Choice(["boss", "zhilian", "liepin", "job51"]), default="", help="不传时从岗位记录或 URL 自动识别")
+def apply_cmd(job_url, platform):
+    resp = client.apply_one(job_url, platform)
     result = output.ok_or_fail(resp, "apply")
     output.emit(result)
 
@@ -86,8 +86,9 @@ def apply_cmd(job_url):
 # ── 批量投递 ──
 @main.command("apply-batch")
 @click.option("--status", "filter_status", default="pending", help="pending 等状态")
-def apply_batch_cmd(filter_status):
-    r = client.jobs(filter_status, limit=200)
+@click.option("--platform", type=click.Choice(["boss", "zhilian", "liepin", "job51"]), default="", help="只投递指定平台，留空允许混合平台")
+def apply_batch_cmd(filter_status, platform):
+    r = client.jobs(filter_status, limit=200, platform=platform)
     if r.is_error:
         output.emit(output.fail("apply-batch", f"fetch jobs failed: {r.status_code}"))
         return
@@ -96,7 +97,7 @@ def apply_batch_cmd(filter_status):
     if not urls:
         output.emit(output.fail("apply-batch", "no job_urls found"))
         return
-    resp = client.apply_batch(urls)
+    resp = client.apply_batch(urls, jobs_list)
     result = output.ok_or_fail(resp, "apply-batch")
     output.emit(result)
 
@@ -156,8 +157,9 @@ def doctor_cmd():
 
 # ── 扫码登录 ──
 @main.command("login")
-def login_cmd():
-    resp = client.relogin()
+@click.option("--platform", type=click.Choice(["boss", "zhilian", "liepin", "job51"]), default="boss", show_default=True)
+def login_cmd(platform):
+    resp = client.start_platform(platform, login=True)
     result = output.ok_or_fail(resp, "login")
     output.emit(result)
 
