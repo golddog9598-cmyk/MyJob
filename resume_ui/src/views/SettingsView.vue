@@ -1,13 +1,13 @@
 <template>
   <section class="view-stack" aria-labelledby="settings-title">
-    <header class="view-heading"><div><h1 id="settings-title">设置与安全</h1><p>密钥只写入后端，读取设置时不会返回明文。</p></div><button class="secondary-action compact" :disabled="loading" @click="loadSettings(true)"><Icon icon="mdi:refresh" :class="{ spin: loading }" />刷新</button></header>
+    <header class="view-heading"><div><h1 id="settings-title">设置与安全</h1><p>招聘平台与自动化配置只保存在当前浏览器，不会发送到后端。</p></div><button class="secondary-action compact" :disabled="loading" @click="loadSettings"><Icon icon="mdi:refresh" :class="{ spin: loading }" />刷新</button></header>
 
     <div v-if="loading && !ready" class="settings-skeleton"><span v-for="item in 4" :key="item"></span></div>
     <form v-else class="settings-grid" @submit.prevent="saveSettings">
       <section class="surface-block settings-section">
-        <header><div><h2>AI 模型</h2><p>用于简历定制、招呼语和沟通建议。</p></div><span class="status-text" :data-status="settings.ai_key_configured === 'true' ? 'active' : 'paused'">{{ settings.ai_key_configured === 'true' ? '密钥已配置' : '未配置' }}</span></header>
+        <header><div><h2>AI 模型</h2><p>密钥只保存在浏览器 IndexedDB，用于用户侧处理。</p></div><span class="status-text" :data-status="localAiConfigured ? 'active' : 'paused'">{{ localAiConfigured ? '本地已配置' : '未配置' }}</span></header>
         <label><span>平台</span><select v-model="settings.ai_platform"><option value="">选择平台</option><option value="deepseek">DeepSeek</option><option value="openrouter">OpenRouter</option><option value="mimo">小米 MiMo</option><option value="custom">自定义</option></select></label>
-        <label><span>API Key</span><input v-model="apiKey" type="password" autocomplete="off" :placeholder="settings.ai_key_configured === 'true' ? '已配置，留空表示不修改' : '输入 API Key'" /></label>
+        <label><span>API Key</span><input v-model="apiKey" type="password" autocomplete="off" :placeholder="localAiConfigured ? '本地已配置，留空表示不修改' : '输入 API Key'" /></label>
         <label><span>Base URL</span><input v-model.trim="settings.ai_base_url" placeholder="https://api.example.com/v1" /></label>
         <label><span>模型</span><input v-model.trim="settings.ai_model" placeholder="模型名称" /></label>
       </section>
@@ -34,7 +34,7 @@
       </section>
 
       <section class="surface-block settings-section diagnostics-section">
-        <header><div><h2>运行诊断</h2><p>诊断只在打开设置页时读取，不做高频轮询。</p></div><button type="button" class="text-action" @click="loadDoctor"><Icon icon="mdi:stethoscope" />重新检查</button></header>
+        <header><div><h2>用户侧诊断</h2><p>只检查浏览器扩展和本地缓存，不读取招聘平台后端数据。</p></div><button type="button" class="text-action" @click="loadDoctor"><Icon icon="mdi:stethoscope" />重新检查</button></header>
         <dl v-if="doctor" class="status-list">
           <div v-for="(item, key) in doctor.checks" :key="key"><dt>{{ checkLabel(key) }}</dt><dd :class="item.ok ? 'good' : 'muted'">{{ item.detail ?? item }}</dd></div>
         </dl>
@@ -58,6 +58,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { api } from '../api'
+import { platformBridge } from '../platformBridge'
+import { platformStore } from '../platformStore'
 
 const emit = defineEmits(['notify', 'changed'])
 const settings = reactive({})
@@ -68,17 +70,18 @@ const loading = ref(false)
 const saving = ref(false)
 const changingPassword = ref(false)
 const ready = ref(false)
-const autoReply = computed({ get: () => settings.auto_reply_enabled === 'true', set: value => { settings.auto_reply_enabled = String(value) } })
-const dedupCompany = computed({ get: () => settings.dedup_company_by_default !== 'false', set: value => { settings.dedup_company_by_default = String(value) } })
-const filterInactive = computed({ get: () => settings.filter_inactive_hr !== 'false', set: value => { settings.filter_inactive_hr = String(value) } })
-const dirtyHint = computed(() => apiKey.value ? '保存后新密钥立即生效' : '配置仅在点击保存后写入')
+const localAiConfigured = computed(() => Boolean(settings.ai_api_key))
+const autoReply = computed({ get: () => Boolean(settings.auto_reply_enabled), set: value => { settings.auto_reply_enabled = value } })
+const dedupCompany = computed({ get: () => settings.dedup_company_by_default !== false, set: value => { settings.dedup_company_by_default = value } })
+const filterInactive = computed({ get: () => settings.filter_inactive_hr !== false, set: value => { settings.filter_inactive_hr = value } })
+const dirtyHint = computed(() => apiKey.value ? '新密钥将写入当前浏览器' : '配置仅在点击保存后写入当前浏览器')
 
-async function loadSettings(force = false) {
+async function loadSettings() {
   loading.value = true
   try {
-    const result = await api.get('/api/settings', { force })
+    const result = await platformStore.getSettings()
     Object.keys(settings).forEach(key => delete settings[key])
-    Object.assign(settings, result.settings || {})
+    Object.assign(settings, result)
     ready.value = true
     await loadDoctor()
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
@@ -89,19 +92,30 @@ async function saveSettings() {
   saving.value = true
   try {
     const payload = { ...settings }
-    delete payload.ai_key_configured
     if (apiKey.value) payload.ai_api_key = apiKey.value
-    await api.put('/api/settings', payload)
+    const saved = await platformStore.saveSettings(payload)
+    Object.assign(settings, saved)
     apiKey.value = ''
-    emit('notify', { type: 'success', message: '设置已保存' })
+    emit('notify', { type: 'success', message: '设置已保存到当前浏览器' })
     emit('changed')
-    await loadSettings(true)
+    await loadDoctor()
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { saving.value = false }
 }
 
 async function loadDoctor() {
-  try { doctor.value = await api.get('/api/doctor', { force: true }) }
+  try {
+    const [runtime, summary] = await Promise.all([platformBridge.heartbeat(), platformStore.getSummary()])
+    doctor.value = {
+      checks: {
+        extension: { ok: runtime.available, detail: runtime.available ? '已连接' : '未安装或未连接' },
+        browser: { ok: runtime.browser_running, detail: runtime.browser_running ? '平台窗口运行中' : '未启动平台窗口' },
+        local_cache: { ok: true, detail: 'IndexedDB 可用' },
+        today_applications: { ok: true, detail: summary.stats.today_applications || 0 },
+        pending_jobs: { ok: true, detail: summary.stats.pending || 0 },
+      },
+    }
+  }
   catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
 }
 
@@ -119,6 +133,6 @@ async function changePassword() {
   finally { changingPassword.value = false }
 }
 
-const checkLabel = key => ({ python: 'Python', browser: '浏览器', boss_login: 'BOSS 登录', ai_key: 'AI 密钥', today_applications: '今日投递', pending_jobs: '待投递' }[key] || key)
+const checkLabel = key => ({ extension: '浏览器扩展', browser: '平台窗口', local_cache: '本地缓存', today_applications: '今日投递', pending_jobs: '待投递' }[key] || key)
 onMounted(() => loadSettings())
 </script>

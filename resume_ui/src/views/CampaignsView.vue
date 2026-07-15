@@ -1,12 +1,13 @@
 <template>
   <section class="view-stack" aria-labelledby="campaign-title">
-    <header class="view-heading"><div><h1 id="campaign-title">求职计划</h1><p>按岗位和城市组合运行，默认由你确认后再投递。</p></div><button class="secondary-action compact" :disabled="loading" @click="loadCampaigns(true)"><Icon icon="mdi:refresh" :class="{ spin: loading }" />刷新</button></header>
+    <header class="view-heading"><div><h1 id="campaign-title">求职计划</h1><p>计划在当前浏览器内运行，默认由你确认后再投递。</p></div><button class="secondary-action compact" :disabled="loading" @click="loadCampaigns"><Icon icon="mdi:refresh" :class="{ spin: loading }" />刷新</button></header>
 
     <div class="campaign-layout">
       <section class="surface-block campaign-form-block">
-        <header><div><h2>新建计划</h2><p>定时器只在 BOSS 浏览器已登录时工作。</p></div></header>
+        <header><div><h2>新建计划</h2><p>启用中的计划只在 MyJob 页面打开时运行。</p></div></header>
         <form class="stack-form" @submit.prevent="createCampaign">
           <label><span>计划名称</span><input v-model.trim="form.name" required placeholder="例如：深圳 AI 产品岗位" /></label>
+          <label><span>招聘平台</span><select v-model="form.platform"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
           <label><span>目标岗位</span><input v-model.trim="form.keywords" required placeholder="AI 产品经理, AI Agent" /><small>使用英文逗号分隔</small></label>
           <label><span>目标城市</span><input v-model.trim="form.cities" required placeholder="深圳, 广州" /><small>使用英文逗号分隔</small></label>
           <div class="form-grid-two">
@@ -28,7 +29,7 @@
         <div v-else-if="!campaigns.length" class="empty-state"><Icon icon="mdi:calendar-search-outline" /><strong>还没有求职计划</strong><span>先创建一个人工确认模式的计划。</span></div>
         <div v-else class="campaign-list">
           <article v-for="campaign in campaigns" :key="campaign.id">
-            <header><div><strong>{{ campaign.name }}</strong><span>{{ campaign.keywords.join(' / ') }} · {{ campaign.cities.join(' / ') }}</span></div><span class="status-text" :data-status="campaign.status">{{ campaign.status === 'active' ? '运行中' : '已暂停' }}</span></header>
+            <header><div><strong>{{ campaign.name }}</strong><span>{{ platformName(campaign.platform) }} · {{ campaign.keywords.join(' / ') }} · {{ campaign.cities.join(' / ') }}</span></div><span class="status-text" :data-status="campaign.status">{{ campaign.status === 'active' ? '运行中' : '已暂停' }}</span></header>
             <div class="pipeline-row"><span><b>{{ campaign.pipeline?.review || 0 }}</b>待确认</span><span><b>{{ campaign.pipeline?.applied || 0 }}</b>已投递</span><span><b>{{ campaign.pipeline?.replied || 0 }}</b>已回复</span><span><b>{{ campaign.pipeline?.interview || 0 }}</b>面试</span></div>
             <footer><span>匹配分 {{ campaign.min_match_score }}，每 {{ campaign.interval_hours }} 小时</span><div><button :disabled="busyId === campaign.id" @click="runCampaign(campaign)">立即运行</button><button class="quiet" :disabled="busyId === campaign.id" @click="toggleCampaign(campaign)">{{ campaign.status === 'active' ? '暂停' : '启用' }}</button></div></footer>
           </article>
@@ -41,7 +42,9 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { Icon } from '@iconify/vue'
-import { api } from '../api'
+import { PLATFORMS } from '../platformCatalog'
+import { platformBridge } from '../platformBridge'
+import { platformStore } from '../platformStore'
 
 const emit = defineEmits(['notify', 'changed'])
 const campaigns = ref([])
@@ -49,13 +52,16 @@ const loading = ref(false)
 const saving = ref(false)
 const busyId = ref(null)
 const error = ref('')
-const form = reactive({ name: '我的求职计划', keywords: '', cities: '', min_match_score: 60, max_jobs_per_run: 10, interval_hours: 24, auto_tailor: true, apply_mode: 'review', auto_apply_confirmed: false })
+const platforms = PLATFORMS
+const form = reactive({ name: '我的求职计划', platform: 'boss', keywords: '', cities: '', min_match_score: 60, max_jobs_per_run: 10, interval_hours: 24, auto_tailor: true, apply_mode: 'review', auto_apply_confirmed: false })
 
 const splitValues = value => String(value || '').split(',').map(item => item.trim()).filter(Boolean)
 
-async function loadCampaigns(force = false) {
+const platformName = value => platforms.find(item => item.id === value)?.label || 'BOSS 直聘'
+
+async function loadCampaigns() {
   loading.value = true
-  try { campaigns.value = (await api.get('/api/campaigns', { force })).campaigns || [] }
+  try { campaigns.value = await platformStore.listCampaigns() }
   catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { loading.value = false }
 }
@@ -69,9 +75,9 @@ async function createCampaign(status = 'active') {
   }
   saving.value = true
   try {
-    await api.post('/api/campaigns', { ...form, keywords: splitValues(form.keywords), cities: splitValues(form.cities), status })
+    await platformStore.saveCampaign({ ...form, keywords: splitValues(form.keywords), cities: splitValues(form.cities), status })
     form.name = '我的求职计划'; form.keywords = ''; form.cities = ''; form.auto_apply_confirmed = false
-    await loadCampaigns(true)
+    await loadCampaigns()
     emit('changed')
     emit('notify', { type: 'success', message: status === 'active' ? '计划已启用' : '计划已保存' })
   } catch (exc) { error.value = exc.message }
@@ -81,8 +87,8 @@ async function createCampaign(status = 'active') {
 async function toggleCampaign(campaign) {
   busyId.value = campaign.id
   try {
-    await api.put(`/api/campaigns/${campaign.id}/status`, { status: campaign.status === 'active' ? 'paused' : 'active' })
-    await loadCampaigns(true)
+    await platformStore.saveCampaign({ ...campaign, status: campaign.status === 'active' ? 'paused' : 'active' })
+    await loadCampaigns()
     emit('changed')
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
@@ -90,12 +96,36 @@ async function toggleCampaign(campaign) {
 
 async function runCampaign(campaign) {
   busyId.value = campaign.id
-  emit('notify', { type: 'info', message: '计划正在运行，完成后会自动刷新' })
+  emit('notify', { type: 'info', message: `正在用户浏览器内运行${platformName(campaign.platform)}计划` })
   try {
-    await api.post(`/api/campaigns/${campaign.id}/run`)
-    await loadCampaigns(true)
+    const found = []
+    for (const city of campaign.cities) {
+      for (const keyword of campaign.keywords) {
+        const result = await platformBridge.search({ platform: campaign.platform, city, keyword, limit: campaign.max_jobs_per_run })
+        found.push(...(result.jobs || []))
+        if (found.length >= campaign.max_jobs_per_run) break
+      }
+      if (found.length >= campaign.max_jobs_per_run) break
+    }
+    const saved = await platformStore.saveJobs(campaign.platform, found.slice(0, campaign.max_jobs_per_run))
+    let applied = 0
+    if (campaign.apply_mode === 'automatic' && campaign.auto_apply_confirmed) {
+      for (const job of saved) {
+        const result = await platformBridge.apply({ platform: campaign.platform, job_url: job.job_url })
+        if (result.success) {
+          applied += 1
+          await platformStore.updateJob(job.id, { status: 'applied', applied_at: new Date().toISOString() })
+        }
+      }
+    }
+    await platformStore.saveCampaign({
+      ...campaign,
+      last_run_at: new Date().toISOString(),
+      pipeline: { ...(campaign.pipeline || {}), review: Math.max(0, saved.length - applied), applied },
+    })
+    await loadCampaigns()
     emit('changed')
-    emit('notify', { type: 'success', message: '求职计划运行完成' })
+    emit('notify', { type: 'success', message: `计划完成，本地缓存 ${saved.length} 个岗位${applied ? `，投递 ${applied} 个` : ''}` })
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
 }

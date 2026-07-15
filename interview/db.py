@@ -20,8 +20,7 @@ def get_conn():
 # ========== 面试问答对操作 ==========
 
 def add_qa_pair(category: str, question: str, answer: str,
-                difficulty: str = "medium", skills: str = "",
-                source_job_id: Optional[int] = None) -> int:
+                difficulty: str = "medium", skills: str = "") -> int:
     """添加面试问答对（自动生成embedding）"""
     embedding = get_embedding(question)
     embedding_json = json.dumps(embedding, ensure_ascii=False)
@@ -29,10 +28,10 @@ def add_qa_pair(category: str, question: str, answer: str,
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            sql = """INSERT INTO interview_qa_pairs 
-                     (category, question, answer, difficulty, embedding, related_skills, source_job_id)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s)"""
-            cur.execute(sql, (category, question, answer, difficulty, embedding_json, skills, source_job_id))
+            sql = """INSERT INTO interview_qa_pairs
+                     (category, question, answer, difficulty, embedding, related_skills)
+                     VALUES (%s, %s, %s, %s, %s, %s)"""
+            cur.execute(sql, (category, question, answer, difficulty, embedding_json, skills))
             conn.commit()
             return cur.lastrowid
     finally:
@@ -113,58 +112,6 @@ def semantic_search_qa(query: str, category: Optional[str] = None,
 
         results.sort(key=lambda x: x["similarity"], reverse=True)
         return results[:limit]
-    finally:
-        conn.close()
-
-
-# ========== 岗位JD操作 ==========
-
-def search_jobs_by_semantic(query: str, limit: int = 5) -> List[Dict[str, Any]]:
-    """语义搜索匹配的岗位"""
-    query_vec = get_embedding(query)
-
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, title, salary, company, experience, education, "
-                "requirement_category, requirement_text, source_url "
-                "FROM job_requirements"
-            )
-            rows = cur.fetchall()
-
-        results = []
-        for row in rows:
-            # 用title+requirement_text算相似度
-            text = f"{row['title']} {row['requirement_category'] or ''} {row['requirement_text'] or ''}"
-            text_vec = get_embedding(text[:500])  # 截取前500字符
-            sim = cosine_similarity(query_vec, text_vec)
-            results.append({
-                "id": row["id"],
-                "title": row["title"],
-                "salary": row["salary"],
-                "company": row["company"],
-                "experience": row["experience"],
-                "education": row["education"],
-                "category": row["requirement_category"],
-                "description": (row["requirement_text"] or "")[:200],
-                "url": row["source_url"],
-                "similarity": round(sim, 4),
-            })
-
-        results.sort(key=lambda x: x["similarity"], reverse=True)
-        return results[:limit]
-    finally:
-        conn.close()
-
-
-def get_all_job_categories() -> List[str]:
-    """获取所有岗位分类"""
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT requirement_category FROM job_requirements WHERE requirement_category IS NOT NULL")
-            return [r["requirement_category"] for r in cur.fetchall()]
     finally:
         conn.close()
 

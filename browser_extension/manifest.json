@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "MyJob 浏览器侧平台桥接",
+  "version": "0.0.9",
+  "description": "在用户浏览器内完成招聘平台登录检测、岗位操作与本地数据同步。",
+  "permissions": ["tabs", "storage", "browsingData"],
+  "host_permissions": [
+    "https://*.zhipin.com/*",
+    "https://*.zhaopin.com/*",
+    "https://*.liepin.com/*",
+    "https://*.51job.com/*",
+    "https://127.0.0.1/*",
+    "https://localhost/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://127.0.0.1/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": ["pageBridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.zhipin.com/*",
+        "https://*.zhaopin.com/*",
+        "https://*.liepin.com/*",
+        "https://*.51job.com/*"
+      ],
+      "js": ["platformContent.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "MyJob 平台桥接"
+  }
+}

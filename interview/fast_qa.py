@@ -481,16 +481,20 @@ def check_short_answer(query: str) -> Optional[str]:
 
 
 def ask_deepseek(question: str) -> str:
-    """AI API兜底（从SQLite设置读取配置）"""
-    import urllib.request, os, sys
+    """AI API兜底（只从环境变量读取配置）。"""
+    import urllib.request
 
-    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-    from boss_state import get_setting, init_db
+    try:
+        from .ai_config import load_ai_config
+    except ImportError:
+        from ai_config import load_ai_config
 
-    init_db()
-    api_key = get_setting("ai_api_key") or ""
-    api_url = (get_setting("ai_base_url") or "https://api.deepseek.com") + "/chat/completions"
-    model = get_setting("ai_model") or "deepseek-chat"
+    config = load_ai_config()
+    api_key = config["api_key"]
+    if not api_key:
+        raise RuntimeError("AI API Key未配置，请设置 MYJOB_AI_API_KEY 环境变量")
+    api_url = f'{config["base_url"]}/chat/completions'
+    model = config["model"]
 
     prompt = f"""你是一个AI应用开发专家。用户问了一个技术问题，请用简短（50-100字）、准确的方式回答。
 

@@ -8,8 +8,7 @@ import json
 import re
 from typing import Optional, List, Dict, Any
 from llm_client import llm_chat_ollama, llm_chat_deepseek, parse_json_from_llm
-from db import (semantic_search_qa, search_jobs_by_semantic,
-                save_interview_record, add_qa_pair, get_all_job_categories)
+from db import semantic_search_qa, save_interview_record, add_qa_pair
 
 
 class InterviewEngine:
@@ -36,19 +35,7 @@ class InterviewEngine:
         self.asked_count = 0
         self.current_question_data = None  # 当前题目完整数据（用于批改后存库）
         self.current_question_id = None
-        self.job_context = ""
-        self._init_context()
-
-    def _init_context(self):
-        """初始化面试上下文"""
-        if self.job_focus:
-            matched_jobs = search_jobs_by_semantic(self.job_focus, limit=3)
-            if matched_jobs:
-                self.job_context = "\n".join([
-                    f"- {j['title']} @ {j['company']} ({j['salary']}) "
-                    f"[匹配度: {j.get('similarity', 0):.0%}]"
-                    for j in matched_jobs
-                ])
+        self.job_context = ""  # 兼容旧响应；不从服务端岗位库加载任何内容。
 
     def _get_category_weights(self) -> Dict[str, float]:
         """根据岗位方向调整分类权重"""
@@ -83,8 +70,6 @@ class InterviewEngine:
         # 构建出题上下文
         focus_text = self.job_focus or "AI应用开发（RAG方向）"
         context_prompt = f"当前岗位方向：{focus_text}\n"
-        if self.job_context:
-            context_prompt += f"匹配到的相关岗位：\n{self.job_context}\n"
         context_prompt += f"当前面试领域：{chosen_category}（这是第{self.asked_count}题）"
 
         system_prompt = """你是一个专业的AI应用开发面试官，专注于RAG/Agent/大模型应用开发方向的面试出题。
@@ -261,7 +246,7 @@ class InterviewEngine:
             job_focus=self.job_focus,
         )
 
-        # 2. 自动存入问答对（如果没有source_job_id说明是LLM新出的题）
+        # 2. 自动存入面试问答库，不关联任何招聘平台岗位记录。
         if self.current_question_id is None and self.current_question_data:
             try:
                 cat = self.current_question_data.get("category", "通用")

@@ -22,18 +22,18 @@
       <nav aria-label="主要导航">
         <button v-for="item in navigation" :key="item.id" :class="{ active: currentView === item.id }" @click="navigate(item.id)"><Icon :icon="item.icon" /><span>{{ item.label }}</span><small v-if="item.id === 'communication' && unreadCount">{{ unreadCount }}</small></button>
       </nav>
-      <div class="sidebar-foot"><span :class="['connection-state', socketState]"><Icon icon="mdi:lan-connect" />{{ socketLabel }}</span><small>数据库与自动化均由后端管理</small></div>
+      <div class="sidebar-foot"><span class="connection-state open"><Icon icon="mdi:database-lock-outline" />本地数据模式</span><small>招聘平台数据仅保存在当前浏览器</small></div>
     </aside>
     <div v-if="mobileNavOpen" class="mobile-scrim" @click="mobileNavOpen = false"></div>
 
     <div class="workspace-body">
       <header class="app-topbar">
         <button class="mobile-menu" aria-label="打开导航" @click="mobileNavOpen = true"><Icon icon="mdi:menu" /></button>
-        <div class="runtime-summary"><span :class="{ active: browserStatus.browser_running }"><Icon icon="mdi:heart-pulse" />{{ browserStatus.browser_running ? '登录心跳运行中' : '登录服务未启动' }}</span><span class="desktop-only">今日投递 {{ summary?.stats?.today_applications || 0 }} / {{ summary?.stats?.daily_limit || 0 }}</span></div>
+        <div class="runtime-summary"><span><Icon icon="mdi:briefcase-check-outline" />今日投递 {{ summary?.stats?.today_applications || 0 }} / {{ summary?.stats?.daily_limit || 0 }}</span></div>
         <PlatformLoginStatus class="topbar-platform-status" :platforms="platforms" :platform-status="browserStatus.platforms" :active-platform="activePlatform" @select="setActivePlatform" />
         <div class="browser-actions desktop-only">
           <button :disabled="systemBusy" @click="startLogin"><Icon icon="mdi:account-key-outline" />启动登录</button>
-          <button :disabled="systemBusy || !browserStatus.browser_running" @click="logoutPlatform"><Icon icon="mdi:logout-variant" />登出</button>
+          <button :disabled="systemBusy" @click="logoutAllPlatforms"><Icon icon="mdi:logout-variant" />全部登出</button>
           <button :disabled="systemBusy || !browserStatus.browser_running" @click="stopBrowser"><Icon icon="mdi:stop-outline" />停止</button>
         </div>
         <ThemeToggle :theme="theme" @toggle="toggleTheme" />
@@ -42,16 +42,16 @@
 
       <div class="mobile-runtime-actions">
         <div class="mobile-platform-status"><PlatformLoginStatus :platforms="platforms" :platform-status="browserStatus.platforms" :active-platform="activePlatform" @select="setActivePlatform" /></div>
-        <button :disabled="systemBusy" @click="startLogin">启动登录</button><button :disabled="systemBusy || !browserStatus.browser_running" @click="logoutPlatform">登出</button><button :disabled="systemBusy || !browserStatus.browser_running" @click="stopBrowser">停止</button>
+        <button :disabled="systemBusy" @click="startLogin">启动登录</button><button :disabled="systemBusy" @click="logoutAllPlatforms">全部登出</button><button :disabled="systemBusy || !browserStatus.browser_running" @click="stopBrowser">停止</button>
       </div>
 
       <main id="main-content" class="workspace-main">
         <KeepAlive>
-          <OverviewView v-if="currentView === 'overview'" :summary="summary" :loading="summaryLoading" @refresh="loadSummary(true)" @navigate="navigate" />
+          <OverviewView v-if="currentView === 'overview'" :summary="summary" :loading="summaryLoading" :platform="activePlatform" :platforms="platforms" :runtime="browserStatus" @refresh="refreshLocalWorkspace" @navigate="navigate" @platform-change="setActivePlatform" />
           <JobCenterView v-else-if="currentView === 'jobs'" :platform="activePlatform" :platforms="platforms" @platform-change="setActivePlatform" @notify="notify" @changed="onDataChanged" />
           <ResumeEditor v-else-if="currentView === 'resume'" class="resume-editor-host" />
           <CampaignsView v-else-if="currentView === 'campaigns'" @notify="notify" @changed="onDataChanged" />
-          <CommunicationView v-else-if="currentView === 'communication'" :refresh-key="eventVersion" @notify="notify" @changed="onDataChanged" />
+          <CommunicationView v-else-if="currentView === 'communication'" :refresh-key="eventVersion" :platform="activePlatform" @notify="notify" @changed="onDataChanged" />
           <SettingsView v-else-if="currentView === 'settings'" @notify="notify" @changed="onDataChanged" />
         </KeepAlive>
       </main>
@@ -81,7 +81,10 @@ import LoginView from './components/LoginView.vue'
 import PlatformLoginStatus from './components/PlatformLoginStatus.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import OverviewView from './views/OverviewView.vue'
-import { api, connectSocket, sleep } from './api'
+import { api } from './api'
+import { PLATFORMS } from './platformCatalog'
+import { platformBridge } from './platformBridge'
+import { platformStore } from './platformStore'
 import { ROUTES } from './product'
 import { applyTheme, preferredTheme } from './theme'
 
@@ -103,12 +106,7 @@ const navigation = [
   { id: 'communication', label: '沟通中心', icon: 'mdi:message-processing-outline' },
   { id: 'settings', label: '设置与安全', icon: 'mdi:tune-variant' },
 ]
-const platforms = [
-  { id: 'boss', label: 'BOSS 直聘', shortLabel: 'BOSS' },
-  { id: 'zhilian', label: '智联招聘', shortLabel: '智联' },
-  { id: 'liepin', label: '猎聘', shortLabel: '猎聘' },
-  { id: 'job51', label: '前程无忧', shortLabel: '前程无忧' },
-]
+const platforms = PLATFORMS
 const validViews = new Set(navigation.map(item => item.id))
 const normalizedPath = location.pathname.length > 1 ? location.pathname.replace(/\/+$/, '') : '/'
 const pageKind = ({
@@ -130,31 +128,21 @@ const currentView = ref(validViews.has(location.hash.slice(1)) ? location.hash.s
 const mobileNavOpen = ref(false)
 const summary = ref(null)
 const summaryLoading = ref(false)
-const socketState = ref('closed')
 const eventVersion = ref(0)
 const systemBusy = ref(false)
 const activePlatform = ref(platforms.some(item => item.id === localStorage.getItem('myjob.activePlatform')) ? localStorage.getItem('myjob.activePlatform') : 'boss')
 const modal = ref(null)
 const toasts = ref([])
 let toastId = 0
-let pollTimer
 let authHeartbeatTimer
 let platformHeartbeatTimer
-let socketCleanup
-let summaryDebounce
+let platformBridgeCleanup
+let platformStoreCleanup
 let pendingLoginPlatform = ''
 let platformHeartbeatBusy = false
 
-const platformRuntime = reactive({ browser_running: false, active_platform: 'boss', platforms: {} })
-const browserStatus = computed(() => {
-  const status = summary.value?.status || {}
-  const hasHeartbeatState = Object.keys(platformRuntime.platforms || {}).length > 0
-  return {
-    ...status,
-    ...(hasHeartbeatState ? platformRuntime : {}),
-    platforms: hasHeartbeatState ? platformRuntime.platforms : (status.platforms || {}),
-  }
-})
+const platformRuntime = reactive({ available: false, browser_running: false, active_platform: 'boss', platforms: {} })
+const browserStatus = computed(() => platformRuntime)
 const portalAuthenticated = computed(() => {
   if (!auth.authenticated) return false
   return adminPortal
@@ -162,7 +150,6 @@ const portalAuthenticated = computed(() => {
     : auth.user?.role === 'user'
 })
 const unreadCount = computed(() => (summary.value?.recent_conversations || []).reduce((sum, item) => sum + Number(item.unread_count || 0), 0))
-const socketLabel = computed(() => ({ open: '实时连接正常', connecting: '正在连接', closed: '等待连接' }[socketState.value] || '等待连接'))
 
 function navigate(view) {
   if (!validViews.has(view)) return
@@ -179,6 +166,7 @@ function setActivePlatform(platform) {
 
 function applyPlatformRuntime(runtime) {
   if (!runtime) return
+  platformRuntime.available = Boolean(runtime.available)
   platformRuntime.browser_running = Boolean(runtime.browser_running)
   platformRuntime.active_platform = runtime.active_platform || activePlatform.value
   platformRuntime.platforms = runtime.platforms || {}
@@ -220,23 +208,21 @@ function startRuntime() {
     if (document.visibilityState === 'visible') api.post('/api/auth/heartbeat').catch(() => {})
   }, 60000)
   if (adminPortal) return
-  loadSummary(true).then(() => refreshPlatformHeartbeat())
-  socketCleanup = connectSocket(handleSocketEvent, value => { socketState.value = value })
-  pollTimer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') loadSummary()
-  }, 15000)
+  loadSummary().then(() => refreshPlatformHeartbeat())
+  platformBridgeCleanup = platformBridge.subscribe(applyPlatformRuntime)
+  platformStoreCleanup = platformStore.subscribe(() => loadSummary())
   platformHeartbeatTimer = window.setInterval(() => {
     if (document.visibilityState === 'visible') refreshPlatformHeartbeat()
   }, 15000)
 }
 
 function stopRuntime() {
-  window.clearInterval(pollTimer)
   window.clearInterval(authHeartbeatTimer)
   window.clearInterval(platformHeartbeatTimer)
-  window.clearTimeout(summaryDebounce)
-  socketCleanup?.()
-  socketCleanup = null
+  platformBridgeCleanup?.()
+  platformStoreCleanup?.()
+  platformBridgeCleanup = null
+  platformStoreCleanup = null
 }
 
 async function logoutApp() {
@@ -258,29 +244,23 @@ async function logoutForAuthSwitch() {
   api.invalidate()
 }
 
-async function loadSummary(force = false) {
+async function loadSummary() {
   if (!auth.authenticated || summaryLoading.value) return
   summaryLoading.value = true
   try {
-    summary.value = await api.get('/api/dashboard/summary', { ttl: 10000, force })
-    applyPlatformRuntime(summary.value?.status)
+    summary.value = await platformStore.getSummary()
   }
-  catch (exc) { if (exc.status !== 401) notify({ type: 'error', message: exc.message }) }
+  catch (exc) { notify({ type: 'error', message: exc.message }) }
   finally { summaryLoading.value = false }
 }
 
-function handleSocketEvent(message) {
-  if (message.type === 'connected' || message.type === 'pong') return
-  if (message.type === 'platform_login_status') applyPlatformRuntime(message)
+function onDataChanged() {
   eventVersion.value += 1
-  api.invalidate('/api/dashboard')
-  window.clearTimeout(summaryDebounce)
-  summaryDebounce = window.setTimeout(() => loadSummary(true), 350)
+  loadSummary()
 }
 
-function onDataChanged() {
-  api.invalidate('/api/dashboard')
-  loadSummary(true)
+async function refreshLocalWorkspace() {
+  await Promise.all([loadSummary(), refreshPlatformHeartbeat()])
 }
 
 async function startLogin() {
@@ -290,17 +270,14 @@ async function startLogin() {
   const platformLabel = platforms.find(item => item.id === platform)?.label || '招聘平台'
   pendingLoginPlatform = platform
   try {
-    const result = await api.post(`/api/system/start?platform=${encodeURIComponent(platform)}&login=true`)
-    if (result.status === 'error') throw new Error(result.message)
-    if (result.logged_in) {
+    const result = await platformBridge.startLogin(platform)
+    if (result.already_logged_in) {
       pendingLoginPlatform = ''
-      showModal('success', '登录成功', `${platformLabel}登录状态验证通过。`)
+      showModal('info', '无需重复登录', `${platformLabel}已登录，无需重复登录。`)
     } else {
       showModal('info', '请登录', `${platformLabel}登录页已打开，完成登录后状态会由心跳自动更新。`)
     }
-    await sleep(600)
     await refreshPlatformHeartbeat()
-    await loadSummary(true)
   } catch (exc) {
     pendingLoginPlatform = ''
     showModal('error', '启动登录失败', exc.message)
@@ -312,7 +289,7 @@ async function refreshPlatformHeartbeat() {
   if (!auth.authenticated || adminPortal || platformHeartbeatBusy) return
   platformHeartbeatBusy = true
   try {
-    const result = await api.post('/api/system/heartbeat')
+    const result = await platformBridge.heartbeat()
     applyPlatformRuntime(result)
     if (pendingLoginPlatform && result.platforms?.[pendingLoginPlatform]?.logged_in) {
       const platform = platforms.find(item => item.id === pendingLoginPlatform)
@@ -320,23 +297,20 @@ async function refreshPlatformHeartbeat() {
       showModal('success', '登录成功', `${platform?.label || '招聘平台'}登录状态验证通过。`)
     }
   } catch (exc) {
-    if (exc.status !== 401) notify({ type: 'error', message: `登录心跳异常：${exc.message}` })
+    notify({ type: 'error', message: `登录心跳异常：${exc.message}` })
   } finally {
     platformHeartbeatBusy = false
   }
 }
 
-async function logoutPlatform() {
+async function logoutAllPlatforms() {
   if (systemBusy.value) return
   systemBusy.value = true
-  const platform = activePlatform.value
-  const platformLabel = platforms.find(item => item.id === platform)?.label || '招聘平台'
   try {
-    const result = await api.post(`/api/system/logout?platform=${encodeURIComponent(platform)}`)
-    showModal(result.status === 'ok' ? 'success' : 'error', result.status === 'ok' ? `已登出${platformLabel}` : '登出失败', result.message)
+    const result = await platformBridge.logoutAll()
+    applyPlatformRuntime(result.runtime)
+    showModal('success', '已全部登出', '四个招聘平台的用户侧登录状态已全部清除。')
     pendingLoginPlatform = ''
-    await refreshPlatformHeartbeat()
-    await loadSummary(true)
   } catch (exc) { showModal('error', '登出失败', exc.message) }
   finally { systemBusy.value = false }
 }
@@ -345,12 +319,10 @@ async function stopBrowser() {
   if (systemBusy.value) return
   systemBusy.value = true
   try {
-    await api.post('/api/system/stop')
+    const result = await platformBridge.stopAll()
     pendingLoginPlatform = ''
-    applyPlatformRuntime({ browser_running: false, active_platform: activePlatform.value, platforms: {} })
-    await refreshPlatformHeartbeat()
-    await loadSummary(true)
-    showModal('success', '已停止', '招聘平台浏览器与消息监控已停止。')
+    applyPlatformRuntime(result.runtime)
+    showModal('success', '已停止', '所有招聘平台浏览器窗口已停止运行。')
   } catch (exc) { showModal('error', '停止失败', exc.message) }
   finally { systemBusy.value = false }
 }

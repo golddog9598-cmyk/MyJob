@@ -1,201 +1,40 @@
-# MyJob
+# MyJob Development Rules
 
-> AI Agent 可调用的 MyJob 命令行入口。CLI 覆盖岗位、简历、计划、沟通和服务管理，stdout 使用 JSON 信封。
+## Mandatory platform boundary
 
-## Install
+All recruitment-platform operations and data are client-side only.
 
-```bash
-git clone https://github.com/golddog9598-cmyk/MyJob.git
-cd MyJob
-git checkout MyJob
-pip install -e .
-playwright install firefox
+- Platform login, heartbeat, logout, window control, search, apply and messaging run in `browser_extension/`.
+- Jobs, applications, conversations, exchanges, campaigns, platform settings and platform statistics use `resume_ui/src/platformStore.js` and browser IndexedDB.
+- FastAPI must never receive or store recruitment-platform cookies, URLs, jobs, companies, applications, recruiters, messages, campaigns or platform statistics.
+- Do not add `/api/system`, `/api/jobs`, `/api/applications`, `/api/conversations`, `/api/campaigns`, `/api/monitor`, `/api/companies`, `/api/settings` or `/api/dashboard` routes.
+- Do not add Playwright, Selenium or recruitment-platform SDKs to Python dependencies.
+- New platform features must extend the Manifest V3 bridge and IndexedDB model.
+
+## Allowed backend scope
+
+- MyJob account registration, login, password and sessions.
+- Administrator accounts, registration controls and online-duration analytics.
+- Main resume, resume templates, import and DOCX/PDF export.
+- HTTPS and built Vue static files.
+
+## Compliance
+
+- Never bypass CAPTCHA, sliders, security verification or rate limits.
+- Stop automation when a platform safety prompt is detected.
+- Automatic applications require explicit user confirmation and a client-side daily limit.
+- Do not log or upload platform page content.
+
+## Verification
+
+```powershell
+cd resume_ui
+npm run build
+cd ..
+python -m pytest tests -q
+python -m py_compile myjob_server.py resume_store.py boss_app.py MyJob_cli\client.py MyJob_cli\cli.py
+python -m json.tool MyJob_cli\schema.json
+git diff --check
 ```
 
-## First Minute
-
-按顺序跑，不需要先读完 README：
-
-```bash
-myjob server --start --port 8010    # 启动后台服务
-myjob doctor                         # 环境诊断
-myjob schema                         # 获取工具清单
-myjob status                         # 检查登录态
-```
-
-完成标准：
-- `myjob doctor` 返回 `ok=true`
-- `myjob schema` 返回当前版本可用的工具描述
-- `myjob status` 返回 `browser_running: true`
-
-**如 `browser_running: false`**：提示用户在浏览器打开 `https://127.0.0.1:8010/app`，设置页启动浏览器并登录招聘平台。
-
----
-
-## Core Loop（核心求职闭环）
-
-```bash
-# 1. 搜索岗位
-myjob search "AI Agent" --city 广州 --welfare "双休,五险一金"
-
-# 2. 查看岗位列表
-myjob jobs --status pending --limit 20
-
-# 3. AI 分析某个岗位匹配度
-myjob analyze <job_url> --title "AI开发工程师"
-
-# 4. 收藏感兴趣的岗位
-myjob shortlist add --job-url <job_url> --title "AI开发"
-
-# 5. 批量投递
-myjob apply-batch
-
-# 6. 查看投递漏斗
-myjob stats
-```
-
----
-
-## Commands Reference
-
-| 命令 | 必填参数 | 可选参数 | 说明 |
-|------|---------|---------|------|
-| `search` | `KEYWORD` | `--city` `--welfare` `--count` | 搜索岗位 |
-| `status` | — | — | 浏览器状态 + 今日统计 |
-| `stats` | — | — | 投递漏斗 |
-| `jobs` | — | `--status` `--limit` | 岗位列表 |
-| `apply` | `JOB_URL` | — | 投递单个 |
-| `apply-batch` | — | `--status` | 批量投递 |
-| `conversations` | — | — | HR 会话列表 |
-| `chat` | `CONV_ID` | — | 查看聊天记录 |
-| `send` | `CONV_ID` | `--msg` | 手动发消息 |
-| `analyze` | `JOB_URL` | `--title` `--company` `--desc` | AI JD 分析 |
-| `shortlist` | `ACTION` | `--job-url` `--title` `--id` | 候选池管理 |
-| `schema` | — | — | 输出工具描述 |
-| `doctor` | — | — | 环境诊断 |
-| `server` | — | `--start` `--stop` `--port` | 管理后台服务 |
-
----
-
-## Output Contract
-
-所有命令 stdout 统一 JSON 信封：
-
-```json
-{
-  "ok": true,
-  "command": "search",
-  "data": [
-    {
-      "title": "AI开发工程师",
-      "company": "XX科技",
-      "salary": "15-25K",
-      "city": "广州",
-      "experience": "3-5年",
-      "job_url": "https://www.zhipin.com/job_detail/xxx.html",
-      "status": "pending"
-    }
-  ],
-  "pagination": { "page": 1, "has_more": true, "total": 15 },
-  "error": null
-}
-```
-
-**约定：**
-- `stdout` → 仅 JSON 数据
-- `stderr` → 日志和进度
-- exit `0` → `ok=true`
-- exit `1` → `ok=false`，读取 `error` 字段
-
----
-
-## Error Handling
-
-| `ok` | 状态 | Agent 动作 |
-|------|------|-----------|
-| `true` | 成功 | 读取 `data`，按 `pagination` 翻页 |
-| `false` + HTTP 503 | 服务未启动 | 提示用户 `myjob server --start` |
-| `false` + 500 | 浏览器未登录 | 提示用户登录 `https://127.0.0.1:8010/app` |
-| `false` + 429 | 今日上限 | 告知用户，等待次日 |
-| `false` + 404 | 资源不存在 | 确认参数正确 |
-
----
-
-## Agent Integration Examples
-
-### subprocess 调用（Python）
-
-```python
-import subprocess, json
-
-def myjob_cmd(*args):
-    result = subprocess.run(["myjob"] + list(args), capture_output=True, text=True)
-    return json.loads(result.stdout)
-
-# 搜索
-r = myjob_cmd("search", "AI Agent", "--city", "北京")
-if r["ok"]:
-    jobs = r["data"]
-    print(f"找到 {r['total']} 个岗位")
-
-# 诊断
-r = myjob_cmd("doctor")
-print("环境OK" if r["ok"] else f"问题: {r['checks']}")
-```
-
-### Node.js / TypeScript
-
-```typescript
-import { execSync } from 'child_process';
-
-function myjob(...args: string[]) {
-  const stdout = execSync(`myjob ${args.join(' ')}`).toString();
-  return JSON.parse(stdout);
-}
-
-const result = myjob('search', 'Golang', '--city', '广州');
-console.log(`找到 ${result.total} 个岗位`);
-```
-
-### Shell
-
-```bash
-result=$(myjob search "Golang" --city 北京)
-if echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d['ok'] else 1)"; then
-  echo "搜索成功"
-fi
-```
-
----
-
-## Safety & Compliance
-
-> ⚠️ 本工具直接操作 BOSS 直聘账号，Agent 调用时请注意：
-
-- 每日投递上限默认 15 条，超限返回 429
-- 投递频率内置随机延迟，不要禁用
-- **不要用 `while true` 循环投递**
-- 账号触发风控时：立即停止，提示用户回平台手动操作
-- AI 回复内容由设置中的简历摘要和风格决定，Agent 无法修改
-
----
-
-## Agent Rule Template
-
-在你的 AI Agent 规则文件（如 opencode 的 AGENTS.md）中添加：
-
-```markdown
-当用户要求搜索职位、投递岗位、查看聊天等 BOSS 直聘操作时：
-1. 先运行 `myjob doctor` 检查环境
-2. 若 `browser_running: false`，提示用户在浏览器登录
-3. 运行 `myjob schema` 获取最新工具列表（不要硬编码命令）
-4. 根据用户意图调用对应命令
-5. 解析 stdout JSON，检查 `ok` 字段
-6. `ok=false` 时读取错误信息，给出可操作建议
-```
-
----
-
-## License
-
-MIT
+The architecture boundary test in `tests/test_client_platform_boundary.py` must remain green.

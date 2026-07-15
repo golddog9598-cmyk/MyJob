@@ -4,7 +4,7 @@ import pytest
 from cryptography import x509
 from fastapi.testclient import TestClient
 
-import boss_app
+import myjob_server
 from myjob_tls import ensure_local_certificate
 
 
@@ -28,11 +28,11 @@ def test_certificate_and_key_must_be_configured_together(tmp_path: Path):
 
 
 def test_app_identity_and_spa_routes():
-    client = TestClient(boss_app.app)
+    client = TestClient(myjob_server.app)
     expected = client.get("/").text
 
-    assert boss_app.app.title == "MyJob"
-    assert boss_app.app.version == "V0.0.8"
+    assert myjob_server.app.title == "MyJob"
+    assert myjob_server.app.version == "V0.0.9"
     for path in ("/login", "/register", "/app", "/docs", "/changelog", "/MyJobaAdmin"):
         response = client.get(path)
         assert response.status_code == 200
@@ -40,14 +40,14 @@ def test_app_identity_and_spa_routes():
 
 
 def test_default_cors_origins_are_https_only():
-    origins = [origin.strip() for origin in boss_app._default_origins.split(",") if origin.strip()]
+    origins = myjob_server.allowed_origins
 
     assert origins
     assert all(origin.startswith("https://") for origin in origins)
 
 
 def test_legacy_admin_route_redirects_to_new_admin_login():
-    client = TestClient(boss_app.app, follow_redirects=False)
+    client = TestClient(myjob_server.app, follow_redirects=False)
     response = client.get("/admin")
 
     assert response.status_code == 307

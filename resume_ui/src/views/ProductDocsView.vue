@@ -38,7 +38,7 @@ const documentSections = [
         <p class="marketing-eyebrow">产品文档</p>
         <h1>了解 MyJob 的工作方式</h1>
         <p>从创建账户到连接招聘平台，按顺序完成设置并开始管理求职流程。</p>
-        <span class="marketing-version">当前版本 V0.0.8</span>
+        <span class="marketing-version">当前版本 V0.0.9</span>
       </header>
 
       <div class="marketing-docs-layout">
@@ -51,9 +51,10 @@ const documentSections = [
         <article class="marketing-docs-content">
           <section id="quick-start">
             <h2>快速开始</h2>
-            <p>访问首页右上角的注册入口，完成账户创建并登录。进入工作台后，从顶部状态卡选择招聘平台，再配置岗位和城市条件。</p>
+            <p>完成 MyJob 注册登录并安装浏览器扩展。进入工作台后，从顶部状态卡选择招聘平台，再配置岗位和城市条件。</p>
             <ol class="marketing-docs-steps">
               <li><strong>注册并登录 MyJob</strong><span>业务功能只对已登录用户开放。</span></li>
+              <li><strong>安装浏览器扩展</strong><span>Chrome 与 Edge 加载仓库中的 browser_extension 目录。</span></li>
               <li><strong>选择招聘平台</strong><span>从 BOSS 直聘、智联招聘、猎聘或前程无忧中选择并登录。</span></li>
               <li><strong>设置求职目标</strong><span>选择岗位方向、目标城市和筛选条件。</span></li>
               <li><strong>检查后再执行</strong><span>确认岗位、沟通内容和简历版本符合预期。</span></li>
@@ -62,7 +63,7 @@ const documentSections = [
 
           <section id="account">
             <h2>账户与安全</h2>
-            <p>MyJob 账户用于保护工作台和业务接口。请使用符合页面规则的独立密码，不要与招聘平台共用密码。</p>
+            <p>MyJob 账户用于保护工作台和简历接口。招聘平台 Cookie 和页面数据只由用户浏览器保存，不会发送到 MyJob 后端。</p>
             <div class="marketing-docs-note">
               <Icon icon="mdi:shield-key-outline" aria-hidden="true" />
               <p><strong>安全建议</strong>退出公共设备前，请同时退出招聘平台和 MyJob 账户。</p>
@@ -71,14 +72,14 @@ const documentSections = [
 
           <section id="platforms">
             <h2>连接招聘平台</h2>
-            <p>当前已接入 BOSS 直聘、智联招聘、猎聘和前程无忧。先在工作台顶部状态卡选择平台，再点击启动登录并在可见页面完成登录。工作台每 15 秒通过轻量心跳自动验证四个平台，用户无需手动检查。</p>
-            <p>平台登录态按域名隔离，登出一个平台不会清除其他平台会话。遇到验证码、安全验证或操作频繁提示时，请停止自动化并在浏览器中人工处理。</p>
-            <p>BOSS 直聘支持消息同步和招聘者活跃度筛选。智联招聘、猎聘和前程无忧当前支持岗位搜索、筛选、入库和单岗位投递，持续消息同步将在后续版本完善。</p>
+            <p>当前已接入 BOSS 直聘、智联招聘、猎聘和前程无忧。平台登录检测和窗口控制由 MyJob 浏览器扩展在用户侧执行，工作台每 15 秒读取一次扩展状态。</p>
+            <p>已登录平台再次点击启动登录时不会打开重复窗口。全部登出会清除四个平台会话，停止会关闭所有招聘平台窗口。</p>
+            <p>遇到验证码、安全验证或操作频繁提示时，请停止自动操作并在招聘平台窗口中人工处理。</p>
           </section>
 
           <section id="job-search">
             <h2>岗位与城市筛选</h2>
-            <p>先填写目标城市，再补充岗位关键词、经验要求和其他偏好。更具体的条件有助于减少无关结果，但条件过多也可能缩小可选范围。</p>
+            <p>先填写目标城市，再补充岗位关键词、经验要求和其他偏好。搜索由浏览器扩展执行，结果只写入当前浏览器 IndexedDB。</p>
             <div class="marketing-docs-checklist">
               <span><Icon icon="mdi:check-circle-outline" aria-hidden="true" />目标城市</span>
               <span><Icon icon="mdi:check-circle-outline" aria-hidden="true" />岗位关键词</span>
@@ -95,7 +96,7 @@ const documentSections = [
 
           <section id="communication">
             <h2>沟通与邀约</h2>
-            <p>与 HR 沟通前确认岗位上下文和简历版本。收到面试邀约后，及时核对时间、方式、联系人和岗位名称，并在计划中继续跟进。</p>
+            <p>与 HR 沟通前确认岗位上下文和简历版本。消息同步和发送由浏览器扩展执行，会话只缓存在当前浏览器。</p>
             <p>招聘平台界面和规则可能变化，具体操作以平台当前页面与服务条款为准。</p>
           </section>
         </article>

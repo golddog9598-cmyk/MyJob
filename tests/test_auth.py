@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import boss_app
+import myjob_server
 from app_auth import (
     PASSWORD_ITERATIONS,
     AuthManager,
@@ -141,13 +141,13 @@ def test_presence_heartbeat_is_low_frequency_and_counts_user_time(tmp_path: Path
 
 def test_api_registration_admin_portal_permissions_and_account_controls(tmp_path: Path, monkeypatch):
     manager = AuthManager(tmp_path / "auth.db")
-    monkeypatch.setattr(boss_app, "auth_manager", manager)
-    monkeypatch.setattr(boss_app, "login_limiter", LoginRateLimiter())
-    admin_client = TestClient(boss_app.app)
-    user_client = TestClient(boss_app.app)
+    monkeypatch.setattr(myjob_server, "auth_manager", manager)
+    monkeypatch.setattr(myjob_server, "login_limiter", LoginRateLimiter())
+    admin_client = TestClient(myjob_server.app)
+    user_client = TestClient(myjob_server.app)
     try:
         assert user_client.get("/api/health").status_code == 200
-        protected = user_client.get("/api/status")
+        protected = user_client.get("/api/resumes/master")
         assert protected.status_code == 401
         assert protected.json()["code"] == "AUTH_REQUIRED"
 
@@ -176,7 +176,7 @@ def test_api_registration_admin_portal_permissions_and_account_controls(tmp_path
         assert registration.status_code == 201
         assert registration.json()["user"]["role"] == "user"
         assert registration.json()["user"]["role"] not in {"admin", "superadmin"}
-        assert user_client.get("/api/status").status_code == 200
+        assert user_client.get("/api/resumes/master").status_code == 200
         assert user_client.get("/api/admin/overview").status_code == 403
         assert user_client.post("/api/auth/heartbeat").status_code == 200
 
@@ -228,7 +228,7 @@ def test_api_registration_admin_portal_permissions_and_account_controls(tmp_path
         assert disabled.status_code == 200
         assert disabled.json()["user"]["is_active"] is False
 
-        assert user_client.get("/api/status").status_code == 401
+        assert user_client.get("/api/resumes/master").status_code == 401
         failed_login = user_client.post(
             "/api/auth/login", json={"username": "WebUser01", "password": "WebUser@123"}
         )
@@ -236,7 +236,7 @@ def test_api_registration_admin_portal_permissions_and_account_controls(tmp_path
 
         registration_toggle = admin_client.put("/api/admin/registration", json={"enabled": False})
         assert registration_toggle.status_code == 200
-        blocked_registration = TestClient(boss_app.app).post(
+        blocked_registration = TestClient(myjob_server.app).post(
             "/api/auth/register",
             json={"username": "Second002", "password": "Second@456"},
         )
@@ -249,10 +249,10 @@ def test_api_registration_admin_portal_permissions_and_account_controls(tmp_path
 
 def test_normal_user_cannot_use_admin_login(tmp_path: Path, monkeypatch):
     manager = AuthManager(tmp_path / "auth.db")
-    monkeypatch.setattr(boss_app, "auth_manager", manager)
-    monkeypatch.setattr(boss_app, "login_limiter", LoginRateLimiter())
+    monkeypatch.setattr(myjob_server, "auth_manager", manager)
+    monkeypatch.setattr(myjob_server, "login_limiter", LoginRateLimiter())
     manager.register("Normal001", USER_PASSWORD)
-    client = TestClient(boss_app.app)
+    client = TestClient(myjob_server.app)
     try:
         response = client.post(
             "/api/admin/login", json={"username": "Normal001", "password": USER_PASSWORD}
@@ -265,8 +265,8 @@ def test_normal_user_cannot_use_admin_login(tmp_path: Path, monkeypatch):
 
 def test_admin_accounts_cannot_use_normal_user_login(tmp_path: Path, monkeypatch):
     manager = AuthManager(tmp_path / "auth.db")
-    monkeypatch.setattr(boss_app, "auth_manager", manager)
-    monkeypatch.setattr(boss_app, "login_limiter", LoginRateLimiter())
+    monkeypatch.setattr(myjob_server, "auth_manager", manager)
+    monkeypatch.setattr(myjob_server, "login_limiter", LoginRateLimiter())
     admin = manager.create_admin("OpsAdmin01", USER_PASSWORD)
     credentials = (
         (DEFAULT_SUPERADMIN_USERNAME, DEFAULT_SUPERADMIN_PASSWORD, "superadmin"),
@@ -274,7 +274,7 @@ def test_admin_accounts_cannot_use_normal_user_login(tmp_path: Path, monkeypatch
     )
     try:
         for username, password, role in credentials:
-            with TestClient(boss_app.app) as client:
+            with TestClient(myjob_server.app) as client:
                 rejected = client.post(
                     "/api/auth/login", json={"username": username, "password": password}
                 )
@@ -289,16 +289,5 @@ def test_admin_accounts_cannot_use_normal_user_login(tmp_path: Path, monkeypatch
         manager.close()
 
 
-def test_settings_response_never_returns_plaintext_api_key(monkeypatch):
-    monkeypatch.setattr(
-        boss_app,
-        "get_all_settings",
-        lambda: {"ai_api_key": "secret-value-that-must-not-leak", "ai_model": "example-model"},
-    )
-    result = boss_app.read_settings()
-    assert "ai_api_key" not in result["settings"]
-    assert result["settings"]["ai_key_configured"] == "true"
-
-
 def test_root_and_admin_routes_prefer_built_vue_frontend():
-    assert 'id="app"' in boss_app.index().body.decode("utf-8")
+    assert 'id="app"' in myjob_server.index().body.decode("utf-8")

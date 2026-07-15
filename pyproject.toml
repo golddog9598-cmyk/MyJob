@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myjob"
-version = "0.0.8"
+version = "0.0.9"
 description = "MyJob · AI 驱动的智能求职助手"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -13,11 +13,10 @@ authors = [{ name = "MyJob" }]
 dependencies = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
-    "playwright>=1.40",
     "beautifulsoup4>=4.12",
     "lxml>=4.9",
-    "pyyaml>=6.0",
     "httpx>=0.24",
+    "click>=8.1",
     "python-multipart>=0.0.9",
     "python-docx>=1.1",
     "reportlab>=4.0",

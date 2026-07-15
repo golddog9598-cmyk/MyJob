@@ -1,176 +1,37 @@
 {
-  "name": "MyJob",
-  "version": "V0.0.8",
-  "description": "多平台求职自动化工具 - 岗位筛选/简历投递/HR沟通/面试邀约",
-  "server": "https://127.0.0.1:8010",
+  "name": "MyJob CLI",
+  "version": "0.0.9",
+  "data_boundary": {
+    "backend": ["MyJob account", "administrator analytics", "main resume", "static Vue files"],
+    "client_only": ["platform login", "job search", "applications", "conversations", "campaigns", "platform statistics"],
+    "client_storage": "IndexedDB"
+  },
   "commands": [
     {
-      "name": "search",
-      "description": "搜索 BOSS 直聘、智联招聘、猎聘或前程无忧岗位，返回统一岗位字段。",
-      "cli": "myjob search <keyword> --platform boss|zhilian|liepin|job51 --city <城市> [--welfare <福利>] [--count <数量>]",
-      "endpoint": "POST /api/jobs/search",
-      "params": {
-        "keyword": { "type": "string", "required": true, "description": "搜索关键词如 AI Agent / Golang 等" },
-        "platform": { "type": "string", "required": false, "default": "boss", "enum": ["boss", "zhilian", "liepin", "job51"], "description": "招聘平台" },
-        "city": { "type": "string", "required": false, "description": "城市名如 北京/广州/全国，不传则用 default_city 设置" },
-        "welfare": { "type": "string", "required": false, "description": "BOSS 直聘福利筛选，逗号分隔" },
-        "limit": { "type": "integer", "required": false, "default": 60, "description": "返回数量上限" }
-      }
-    },
-    {
       "name": "status",
-      "description": "查看浏览器状态和今日统计。",
       "cli": "myjob status",
-      "endpoint": "GET /api/status"
+      "endpoint": "GET /api/health"
     },
     {
-      "name": "stats",
-      "description": "投递转化漏斗统计：搜索→待投递→已投递→HR回复→面试。",
-      "cli": "myjob stats",
-      "endpoint": "GET /api/stats"
-    },
-    {
-      "name": "jobs",
-      "description": "列出本地数据库中的岗位。",
-      "cli": "myjob jobs [--platform boss|zhilian|liepin|job51] [--status pending|applied|replied] [--limit 50]",
-      "endpoint": "GET /api/jobs",
-      "params": {
-        "status": { "type": "string", "required": false, "enum": ["pending", "applied", "replied"], "description": "岗位状态筛选" },
-        "platform": { "type": "string", "required": false, "enum": ["boss", "zhilian", "liepin", "job51"], "description": "招聘平台筛选" },
-        "limit": { "type": "integer", "required": false, "default": 50 }
-      }
-    },
-    {
-      "name": "apply",
-      "description": "投递单个岗位。",
-      "cli": "myjob apply <job_url> [--platform boss|zhilian|liepin|job51]",
-      "endpoint": "POST /api/jobs/apply",
-      "params": {
-        "job_url": { "type": "string", "required": true, "description": "岗位URL" },
-        "platform": { "type": "string", "required": false, "description": "留空时从岗位记录或 URL 自动识别" }
-      }
-    },
-    {
-      "name": "apply-batch",
-      "description": "批量投递待投递岗位，支持按平台筛选或混合平台岗位。",
-      "cli": "myjob apply-batch [--platform boss|zhilian|liepin|job51] [--status pending]",
-      "endpoint": "POST /api/jobs/apply-batch"
-    },
-    {
-      "name": "scan",
-      "description": "BOSS 直聘专属。扫描当前搜索结果页并保存可见岗位。",
-      "cli": "myjob scan",
-      "endpoint": "POST /api/jobs/scan"
-    },
-    {
-      "name": "scan-apply",
-      "description": "BOSS 直聘专属。扫描当前页面全部岗位并批量投递。",
-      "cli": "myjob scan-apply",
-      "endpoint": "POST /api/jobs/scan-and-apply"
-    },
-    {
-      "name": "conversations",
-      "description": "列出已同步的 HR 会话，当前持续消息同步以 BOSS 直聘为主。",
-      "cli": "myjob conversations",
-      "endpoint": "GET /api/conversations"
-    },
-    {
-      "name": "chat",
-      "description": "查看与某HR的聊天记录。",
-      "cli": "myjob chat <conv_id>",
-      "endpoint": "GET /api/conversations/{conv_id}/messages",
-      "params": {
-        "conv_id": { "type": "integer", "required": true, "description": "会话ID" }
-      }
-    },
-    {
-      "name": "send",
-      "description": "向HR手动发送消息。",
-      "cli": "myjob send <conv_id> --msg <消息内容>",
-      "endpoint": "POST /api/conversations/{conv_id}/send",
-      "params": {
-        "conv_id": { "type": "integer", "required": true },
-        "msg": { "type": "string", "required": true, "description": "消息内容" }
-      }
-    },
-    {
-      "name": "doctor",
-      "description": "诊断环境：Python版本、浏览器状态、登录态、AI配置等。",
-      "cli": "myjob doctor",
-      "endpoint": "GET /api/doctor"
-    },
-    {
-      "name": "login",
-      "description": "打开指定招聘平台登录页，支持账号登录、扫码登录等平台现有方式。",
-      "cli": "myjob login --platform boss|zhilian|liepin|job51",
-      "endpoint": "POST /api/system/start?login=true; POST /api/system/heartbeat"
-    },
-    {
-      "name": "server",
-      "description": "管理后台服务（启动/停止/状态）。",
-      "cli": "myjob server [--start|--stop] [--port 8010]"
-    },
-    {
-      "name": "company-preview",
-      "description": "BOSS 直聘专属。拉取公司画像、岗位和招聘者信息。",
-      "cli": "myjob smart-send --keyword <关键词> [--city <城市>]  或  myjob smart-send --company <公司名> [--company-id <id>]",
-      "endpoint": "GET /api/companies/preview",
-      "params": {
-        "keyword": { "type": "string", "required": false, "description": "搜索关键词；和 company 二选一" },
-        "city": { "type": "string", "required": false },
-        "company": { "type": "string", "required": false, "description": "单公司模式直接指定公司名" },
-        "company_id": { "type": "string", "required": false, "description": "BOSS 32位 hex 的 companyId" }
-      }
-    },
-    {
-      "name": "smart-send",
-      "description": "BOSS 直聘专属。先预览公司画像挑选招聘者，再发送招呼语并投递。",
-      "cli": "myjob smart-send --keyword <关键词> [--city <城市>] [--greeting <招呼语>] [--yes]",
-      "endpoint": "POST /api/companies/smart-send",
-      "params": {
-        "keyword": { "type": "string", "required": false },
-        "city": { "type": "string", "required": false },
-        "company": { "type": "string", "required": false },
-        "company_id": { "type": "string", "required": false },
-        "greeting": { "type": "string", "required": false, "description": "留空自动生成，会把 top_hr 称呼带进招呼语" },
-        "yes": { "type": "boolean", "required": false, "default": false, "description": "跳过 y/N 确认直接投递" }
-      }
+      "name": "open",
+      "cli": "myjob open",
+      "description": "Open the Vue workspace where all recruitment-platform operations run"
     },
     {
       "name": "resume",
-      "description": "上传 DOCX/PDF/TXT/Markdown/HTML/RTF/JSON/ODT 简历，选择模板，生成带事实审计的 JD 定制简历并导出 DOCX/PDF。",
-      "cli": "myjob resume templates | myjob resume upload --file resume.docx --template modern_blue | myjob resume tailor --job-url <url> | myjob resume export --format pdf --output resume.pdf",
-      "endpoint": "GET /api/resume-templates; POST /api/resumes/upload; POST /api/jobs/tailor-resume; GET /api/resumes/master/export",
-      "params": {
-        "job_url": { "type": "string", "required": true },
-        "template": { "type": "string", "required": false, "default": "ats_classic" },
-        "format": { "type": "string", "required": false, "enum": ["docx", "pdf", "html", "md", "txt"] },
-        "output": { "type": "string", "required": false, "description": "本地输出路径" }
-      }
+      "cli": "myjob resume show|templates|upload|template|export",
+      "endpoints": [
+        "GET /api/resumes/master",
+        "GET /api/resume-templates",
+        "POST /api/resumes/upload",
+        "PUT /api/resumes/master/template",
+        "GET /api/resumes/master/export"
+      ]
     },
     {
-      "name": "campaign",
-      "description": "按岗位关键词和城市定时搜索，计算匹配分、生成 JD 定制简历，并跟踪投递到面试的漏斗。默认人工确认投递。",
-      "cli": "myjob campaign create --keyword <岗位> --city <城市> [--start] | myjob campaign run <id> | myjob campaign show <id>",
-      "endpoint": "POST /api/campaigns; POST /api/campaigns/{id}/run",
-      "params": {
-        "keyword": { "type": "string[]", "required": true },
-        "city": { "type": "string[]", "required": true },
-        "min_score": { "type": "integer", "default": 60 },
-        "auto_apply": { "type": "boolean", "default": false, "description": "开启时必须同时显式确认" }
-      }
+      "name": "architecture",
+      "cli": "myjob architecture",
+      "description": "Show the enforced browser-side platform data boundary"
     }
-  ],
-  "output_format": {
-    "type": "JSON envelope",
-    "fields": {
-      "ok": "boolean - 操作是否成功",
-      "command": "string - 执行的命令名",
-      "data": "object|array|null - 返回数据",
-      "error": "string|null - 错误信息",
-      "pagination": "object - 分页信息 (搜索等)",
-      "hints": "object - 后续操作提示"
-    }
-  },
-  "agent_instructions": "搜索和投递前先运行 myjob status，并用 --platform 指定 boss、zhilian、liepin 或 job51。未登录时运行 myjob login --platform <平台>，验证码和安全验证必须交给用户人工处理。search、jobs、apply 和 apply-batch 支持多平台。scan、scan-apply、company-preview、smart-send 和持续消息同步当前为 BOSS 直聘专属。解析返回 JSON 的 ok 字段判断成败。"
+  ]
 }

@@ -64,16 +64,16 @@ else:
     print(f"4. MySQL简单查询(100次): {elapsed:.3f}s = {elapsed / 100 * 1000:.1f}ms/次")
     conn.close()
 
-# 5. AI API速度（从SQLite设置读取）
-import sys as _sys
+# 5. AI API速度（只从环境变量读取）
+try:
+    from .ai_config import load_ai_config
+except ImportError:
+    from ai_config import load_ai_config
 
-_sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from boss_state import get_setting, init_db
-
-init_db()
-key = get_setting("ai_api_key") or ""
-api_url = (get_setting("ai_base_url") or "https://api.deepseek.com") + "/chat/completions"
-model = get_setting("ai_model") or "deepseek-chat"
+ai_config = load_ai_config()
+key = ai_config["api_key"]
+api_url = f'{ai_config["base_url"]}/chat/completions'
+model = ai_config["model"]
 
 payload = json.dumps(
     {

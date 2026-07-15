@@ -9,9 +9,8 @@ from typing import Optional, List, Dict, Any
 import uuid
 
 from engine import InterviewEngine
-from db import (semantic_search_qa, add_qa_pair, get_all_job_categories,
-                get_session_summary, get_weak_areas, get_all_session_ids,
-                search_jobs_by_semantic, refresh_all_embeddings)
+from db import (semantic_search_qa, add_qa_pair, get_session_summary,
+                get_weak_areas, get_all_session_ids, refresh_all_embeddings)
 from fast_qa import fast_answer, query_cache as qa_cache
 
 app = FastAPI(title="面试问答Agent", version="1.0.0")
@@ -183,20 +182,7 @@ def add_qa(req: AddQARequest):
 def list_categories():
     """获取所有分类"""
     qa_categories = ["RAG", "Agent", "大模型", "工程化", "Python"]
-    job_categories = get_all_job_categories()
-    return {
-        "qa_categories": qa_categories,
-        "job_categories": [c for c in job_categories if c],
-    }
-
-
-# ===== 岗位接口 =====
-
-@app.get("/api/jobs/search")
-def search_jobs(query: str, limit: int = 5):
-    """语义搜索岗位"""
-    results = search_jobs_by_semantic(query, limit)
-    return {"results": results}
+    return {"qa_categories": qa_categories}
 
 
 # ===== 历史记录 =====

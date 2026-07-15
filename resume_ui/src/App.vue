@@ -6,7 +6,6 @@
         <div>
           <div class="vre-title-row">
             <input v-model="resume.name" class="vre-resume-name" aria-label="简历名称" @input="markDirty" />
-            <span class="vre-save-state" :class="saveState">{{ saveStateText }}</span>
           </div>
           <p>结构化编辑 · 实时 A4 预览 · 模板化导出</p>
         </div>
@@ -151,7 +150,7 @@
       </div>
 
       <div v-if="showTailored" class="vre-modal-backdrop" @click.self="showTailored = false">
-        <section class="vre-modal vre-tailored-modal"><header><div><h2>JD 定制简历</h2><p>按当前模板下载已经生成的岗位定制版本</p></div><button @click="showTailored = false">×</button></header><div v-if="!tailoredResumes.length" class="vre-modal-empty">暂无定制简历</div><div v-else class="vre-tailored-list"><article v-for="item in tailoredResumes" :key="item.id"><div><strong>{{ item.job_title || '定制简历' }}</strong><span>{{ item.company || '未填写公司' }} · {{ item.status || 'draft' }}</span></div><div><a :href="tailoredUrl(item.id, 'docx')">DOCX</a><a :href="tailoredUrl(item.id, 'pdf')">PDF</a></div></article></div></section>
+        <section class="vre-modal vre-tailored-modal"><header><div><h2>JD 定制简历</h2><p>岗位信息只从当前浏览器的本地缓存读取</p></div><button @click="showTailored = false">×</button></header><div v-if="!tailoredResumes.length" class="vre-modal-empty">暂无本地 JD 草稿</div><div v-else class="vre-tailored-list"><article v-for="item in tailoredResumes" :key="item.id"><div><strong>{{ item.job_title || '定制简历' }}</strong><span>{{ item.company || '未填写公司' }} · 本地草稿</span></div><div><button class="vre-btn" @click="useTailorDraft(item)">载入编辑</button></div></article></div></section>
       </div>
     </Teleport>
   </div>
@@ -167,6 +166,7 @@ import PhotoUploader from './components/PhotoUploader.vue'
 import ResumeDocument from './components/ResumeDocument.vue'
 import StyledField from './components/StyledField.vue'
 import { MODULE_MAP, createResume, fromApiResume, newEntry, toApiStructure } from './model'
+import { platformStore } from './platformStore'
 
 const resume = reactive(createResume())
 const templates = ref([])
@@ -193,8 +193,6 @@ const effectiveAccent = computed(() => resume.style.accent_color || currentTempl
 const activeSection = computed(() => resume.sections[activeId.value] || resume.sections.summary)
 const entryLabel = computed(() => ({ experience: '工作经历', education: '教育经历', projects: '项目经历', skills: '技能项' }[activeId.value] || '条目'))
 const visibleModuleCount = computed(() => resume.sectionOrder.filter(key => !resume.hiddenSections.includes(key)).length)
-const saveState = computed(() => saving.value ? 'saving' : dirty.value ? 'dirty' : saved.value ? 'saved' : 'new')
-const saveStateText = computed(() => saving.value ? '保存中' : dirty.value ? '有未保存修改' : saved.value ? '已保存' : '新简历')
 const filteredTemplates = computed(() => {
   const query = templateQuery.value.trim().toLowerCase()
   return templates.value.filter(item => (!atsOnly.value || item.ats_friendly) && (!query || [item.name, item.category, item.description, ...(item.features || [])].join(' ').toLowerCase().includes(query)))
@@ -279,16 +277,15 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const [templateResponse, resumeResponse, tailoredResponse] = await Promise.all([
-      fetch('/api/resume-templates'), fetch('/api/resumes/master'), fetch('/api/resumes/tailored?limit=100'),
+    const [templateResponse, resumeResponse, localTailored] = await Promise.all([
+      fetch('/api/resume-templates'), fetch('/api/resumes/master'), platformStore.listTailorDrafts(),
     ])
     if (!templateResponse.ok || !resumeResponse.ok) throw new Error('简历编辑器数据加载失败')
     const templateData = await templateResponse.json()
     const resumeData = await resumeResponse.json()
-    const tailoredData = tailoredResponse.ok ? await tailoredResponse.json() : { resumes: [] }
     templates.value = templateData.templates || []
     replaceResume(fromApiResume(resumeData.resume))
-    tailoredResumes.value = tailoredData.resumes || []
+    tailoredResumes.value = localTailored
     saved.value = Boolean(resumeData.resume)
     dirty.value = false
   } catch (error) {
@@ -368,7 +365,13 @@ async function download(format) {
   link.click()
 }
 
-const tailoredUrl = (id, format) => `/api/resumes/tailored/${id}/download?format=${format}&template_id=${encodeURIComponent(resume.templateId)}`
+function useTailorDraft(item) {
+  if (item.job_title) resume.basics.title = item.job_title
+  if (item.city && !resume.basics.location) resume.basics.location = item.city
+  markDirty()
+  showTailored.value = false
+  notify('已载入本地岗位信息，请核对并调整简历内容')
+}
 
 function updatePreviewScale() {
   const width = previewHost.value?.clientWidth || 720

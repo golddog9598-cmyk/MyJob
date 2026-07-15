@@ -9,8 +9,12 @@ import httpx
 import numpy as np
 import json
 import re
-import os
 from typing import List, Optional
+
+try:
+    from .ai_config import load_ai_config
+except ImportError:  # Support direct execution from the interview directory.
+    from ai_config import load_ai_config
 
 # Ollama配置
 OLLAMA_BASE = "http://localhost:11434"
@@ -18,32 +22,9 @@ EMBED_MODEL = "nomic-embed-text"
 LLM_MODEL = "qwen2.5:14b"
 
 
-# AI配置（每次调用时从SQLite设置读取）
+# AI配置只从环境变量读取，避免接触任何招聘平台数据库。
 def _load_ai_config():
-    cfg = {
-        "api_key": "",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat",
-    }
-    try:
-        import sys, os
-
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from boss_state import get_setting, get_db
-
-        get_db()
-        key = get_setting("ai_api_key")
-        if key:
-            cfg["api_key"] = key
-        url = get_setting("ai_base_url")
-        if url:
-            cfg["base_url"] = url
-        model = get_setting("ai_model")
-        if model:
-            cfg["model"] = model
-    except Exception:
-        pass
-    return cfg
+    return load_ai_config()
 
 
 def get_embedding(text: str) -> List[float]:
@@ -86,10 +67,10 @@ def llm_chat_ollama(messages: list, system_prompt: Optional[str] = None, tempera
 
 
 def llm_chat_deepseek(messages: list, system_prompt: Optional[str] = None, temperature: float = 0.3) -> str:
-    """调用AI API（懒加载配置，每次从SQLite读取）"""
+    """调用AI API（每次从环境变量读取配置）。"""
     cfg = _load_ai_config()
     if not cfg["api_key"]:
-        raise RuntimeError("AI API Key未配置，请在设置页配置")
+        raise RuntimeError("AI API Key未配置，请设置 MYJOB_AI_API_KEY 环境变量")
 
     if system_prompt:
         messages = [{"role": "system", "content": system_prompt}] + messages

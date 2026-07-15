@@ -1,44 +1,45 @@
 # Contributing
 
-## Development Setup
+## Development setup
 
-```bash
+```powershell
 git clone https://github.com/golddog9598-cmyk/MyJob.git
 cd MyJob
 git checkout MyJob
-pip install -e ".[dev]"
-playwright install firefox
+python -m pip install -e ".[dev]"
+cd resume_ui
+npm install
 ```
 
-## Code Style
+Load `browser_extension/` as an unpacked extension in Chrome or Edge for platform testing.
 
-- Python: follow PEP 8, max line length 120
-- Frontend: Vue 3 single-file components with shared theme tokens
-- Use `ruff` for linting: `ruff check .`
-- No comments unless necessary
+## Architecture rule
 
-## Pull Request Flow
+Recruitment-platform operations and data must stay in the Vue application, Chromium extension and browser IndexedDB. The FastAPI backend is limited to MyJob accounts, administrators, main resumes, templates and static files.
 
-1. Clone the repository
-2. Create a feature branch: `git checkout -b feat/my-feature`
-3. Make changes and test locally
-4. Push and open a pull request against `main`
+Pull requests that add server-side recruitment-platform routes, storage or browser automation will not be accepted.
 
-## Project Conventions
+## Code style
 
-- All Python code is flat (no src-layout for the main modules)
-- CLI module lives in `MyJob_cli/`
-- Database migrations are manual ALTER TABLE in `init_db()`
-- Frontend source lives in `resume_ui/`; production assets are built into `static/app/`
-- API returns JSON, CLI outputs JSON envelope
+- Python follows PEP 8 with a 120 character line limit.
+- Frontend uses Vue 3 single-file components and shared theme tokens.
+- Extension code uses Manifest V3 and no remote executable code.
+- Comments should explain boundaries, compliance or non-obvious behavior.
 
 ## Testing
 
-```bash
-# Manual testing: start server and use web console
-python boss_app.py --port 8010
+```powershell
+cd resume_ui
+npm run build
+cd ..
+python -m pytest tests -q
+python -m py_compile myjob_server.py resume_store.py boss_app.py MyJob_cli\client.py MyJob_cli\cli.py
+python -m json.tool MyJob_cli\schema.json
+git diff --check
+```
 
-# CLI testing
-myjob status
-myjob search "AI Agent" --city 北京
+Manual testing starts with:
+
+```powershell
+python myjob_server.py --port 8010
 ```

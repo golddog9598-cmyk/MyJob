@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-if not defined BOSS_PORT set "BOSS_PORT=8010"
-if not defined BOSS_HOST set "BOSS_HOST=127.0.0.1"
+if not defined MYJOB_PORT set "MYJOB_PORT=8010"
+if not defined MYJOB_HOST set "MYJOB_HOST=127.0.0.1"
 
 where py >nul 2>nul
 if not errorlevel 1 (
@@ -16,12 +16,12 @@ if not errorlevel 1 (
 cd /d "%PROJECT_DIR%" || (echo [ERROR] 无法进入项目目录 & pause & exit /b 1)
 
 echo ============================================
-echo  MyJob V0.0.8
+echo  MyJob V0.0.9
 echo ============================================
 echo.
 
 echo [1/3] 检查 Python 依赖...
-%PYTHON_CMD% -c "import fastapi, uvicorn, yaml, bs4, lxml, websockets, playwright, cryptography" 2>nul
+%PYTHON_CMD% -c "import fastapi, uvicorn, bs4, lxml, httpx, click, cryptography" 2>nul
 if errorlevel 1 (
   echo [WARN] 正在安装缺少的依赖...
   %PYTHON_CMD% -m pip install -r "%PROJECT_DIR%requirements.txt"
@@ -41,8 +41,8 @@ if not exist "%PROJECT_DIR%static\app\index.html" (
   popd
 )
 
-echo [3/3] 启动 HTTPS 服务 https://%BOSS_HOST%:%BOSS_PORT%/
-start "" "https://%BOSS_HOST%:%BOSS_PORT%/"
-%PYTHON_CMD% "%PROJECT_DIR%boss_app.py" --host "%BOSS_HOST%" --port "%BOSS_PORT%"
+echo [3/3] 启动 HTTPS 服务 https://%MYJOB_HOST%:%MYJOB_PORT%/
+start "" "https://%MYJOB_HOST%:%MYJOB_PORT%/"
+%PYTHON_CMD% "%PROJECT_DIR%myjob_server.py" --host "%MYJOB_HOST%" --port "%MYJOB_PORT%"
 
 pause

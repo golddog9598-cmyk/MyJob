@@ -1,7 +1,7 @@
 <template>
   <section class="view-stack" aria-labelledby="jobs-title">
     <header class="view-heading">
-      <div><h1 id="jobs-title">岗位中心</h1><p>搜索、筛选、投递和简历定制在一个工作流中完成。</p></div>
+      <div><h1 id="jobs-title">岗位中心</h1><p>平台操作由浏览器扩展执行，岗位数据只缓存在当前浏览器。</p></div>
       <button class="secondary-action compact" :disabled="loadingJobs" @click="loadJobs(true)"><Icon icon="mdi:refresh" :class="{ spin: loadingJobs }" />刷新列表</button>
     </header>
 
@@ -22,7 +22,7 @@
           </template>
           <span v-else class="platform-capability-note">招聘者活跃度筛选目前仅支持 BOSS 直聘</span>
         </div>
-        <button class="primary-action search-submit" type="submit" :disabled="searching"><Icon :icon="searching ? 'mdi:loading' : 'mdi:magnify'" :class="{ spin: searching }" />{{ searching ? '正在搜索' : '搜索并入库' }}</button>
+        <button class="primary-action search-submit" type="submit" :disabled="searching"><Icon :icon="searching ? 'mdi:loading' : 'mdi:magnify'" :class="{ spin: searching }" />{{ searching ? '正在搜索' : '搜索并缓存' }}</button>
       </form>
       <p v-if="searchResult" class="search-result" role="status">{{ platformName(searchResult.platform) }}：找到 {{ searchResult.jobs_found || 0 }} 个岗位，保存 {{ searchResult.saved || 0 }} 个，过滤 {{ totalSkipped }} 个。</p>
       <p v-if="error" class="form-error" role="alert"><Icon icon="mdi:alert-circle-outline" />{{ error }}</p>
@@ -70,7 +70,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue'
-import { api } from '../api'
+import { platformBridge } from '../platformBridge'
+import { platformStore } from '../platformStore'
 
 const props = defineProps({
   platform: { type: String, default: 'boss' },
@@ -99,14 +100,16 @@ const totalSkipped = computed(() => ['skipped_company', 'skipped_inactive_hr', '
 const statusLabel = value => ({ pending: '待投递', applied: '已投递', replied: '需回复', filtered: '已过滤', skipped: '已跳过', failed: '失败' }[value] || value || '未知')
 const platformName = value => props.platforms.find(item => item.id === (value || 'boss'))?.label || value || 'BOSS 直聘'
 
-async function loadJobs(force = false) {
+async function loadJobs() {
   loadingJobs.value = true
   error.value = ''
-  const query = new URLSearchParams({ limit: String(pageSize), offset: String((page.value - 1) * pageSize) })
-  if (statusFilter.value) query.set('status', statusFilter.value)
-  query.set('platform', search.platform)
   try {
-    const result = await api.get(`/api/jobs?${query}`, { force })
+    const result = await platformStore.listJobs({
+      platform: search.platform,
+      status: statusFilter.value,
+      limit: pageSize,
+      offset: (page.value - 1) * pageSize,
+    })
     jobs.value = result.jobs || []
     total.value = Number(result.total || 0)
   } catch (exc) {
@@ -127,11 +130,12 @@ async function searchJobs() {
       payload.filter_inactive_hr = false
     }
     for (const key of ['experience', 'degree']) payload[key] = payload[key] ? Number(payload[key]) : null
-    const result = await api.post('/api/jobs/search', payload)
-    searchResult.value = result
+    const result = await platformBridge.search(payload)
+    const saved = await platformStore.saveJobs(payload.platform, result.jobs || [])
+    searchResult.value = { ...result, saved: saved.length }
     page.value = 1
     statusFilter.value = ''
-    await loadJobs(true)
+    await loadJobs()
     emit('changed')
   } catch (exc) {
     error.value = exc.message
@@ -143,10 +147,11 @@ async function searchJobs() {
 async function applyJob(job) {
   busyId.value = job.id
   try {
-    const result = await api.post('/api/jobs/apply', { platform: job.platform || search.platform, job_url: job.job_url, company_name: job.company, company_id: job.company_id })
+    const result = await platformBridge.apply({ platform: job.platform || search.platform, job_url: job.job_url })
     if (!result.success) throw new Error(result.message || '投递失败')
+    await platformStore.updateJob(job.id, { status: 'applied', applied_at: new Date().toISOString() })
     emit('notify', { type: 'success', message: `${platformName(job.platform)}岗位已投递` })
-    await loadJobs(true)
+    await loadJobs()
     emit('changed')
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
@@ -155,8 +160,8 @@ async function applyJob(job) {
 async function skipJob(job) {
   busyId.value = job.id
   try {
-    await api.post(`/api/jobs/${job.id}/skip`)
-    await loadJobs(true)
+    await platformStore.updateJob(job.id, { status: 'skipped' })
+    await loadJobs()
     emit('changed')
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
@@ -165,21 +170,21 @@ async function skipJob(job) {
 async function tailorJob(job) {
   busyId.value = job.id
   try {
-    await api.post('/api/jobs/tailor-resume', { application_id: job.id, job_url: job.job_url, job_title: job.job_title, company: job.company, city: job.city, description: job.description })
-    emit('notify', { type: 'success', message: '岗位定制简历已生成，可在简历中心下载' })
+    await platformStore.saveTailorDraft(job)
+    emit('notify', { type: 'success', message: '岗位信息已保存到本地 JD 定制草稿' })
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
 }
 
-function setFilter(value) { statusFilter.value = value; page.value = 1; loadJobs(true) }
-function goPage(value) { page.value = value; loadJobs(true) }
-function changePlatform() { page.value = 1; emit('platform-change', search.platform); loadJobs(true) }
+function setFilter(value) { statusFilter.value = value; page.value = 1; loadJobs() }
+function goPage(value) { page.value = value; loadJobs() }
+function changePlatform() { page.value = 1; emit('platform-change', search.platform); loadJobs() }
 
 watch(() => props.platform, value => {
   if (!value || value === search.platform) return
   search.platform = value
   page.value = 1
-  loadJobs(true)
+  loadJobs()
 })
 
 onMounted(() => loadJobs())

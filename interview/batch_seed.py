@@ -4,20 +4,20 @@
 修复死锁问题 + 每条记录独立提交 + 跳过已存在
 """
 
-import json, os, re, sys, time
+import json, re, time
 import urllib.request
 
-# AI API（从SQLite设置读取）
-import sys, os
+# AI API 只从环境变量读取，不访问招聘平台或 MyJob 数据库。
+try:
+    from .ai_config import load_ai_config
+except ImportError:
+    from ai_config import load_ai_config
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from boss_state import get_setting, init_db
-
-init_db()
-API_KEY = get_setting("ai_api_key") or ""
-BASE_URL = get_setting("ai_base_url") or "https://api.deepseek.com"
+AI_CONFIG = load_ai_config()
+API_KEY = AI_CONFIG["api_key"]
+BASE_URL = AI_CONFIG["base_url"]
 API_URL = f"{BASE_URL}/chat/completions"
-MODEL = get_setting("ai_model") or "deepseek-chat"
+MODEL = AI_CONFIG["model"]
 
 import pymysql
 
