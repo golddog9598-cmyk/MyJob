@@ -104,6 +104,7 @@ export const platformBridge = {
   stopAll: () => requireExtension('stopAll', {}, 15000),
   search: payload => requireExtension('search', payload, 60000),
   apply: payload => requireExtension('apply', payload, 45000),
+  getJobDetail: payload => requireExtension('getJobDetail', payload, 45000),
   syncConversations: payload => requireExtension('syncConversations', payload, 30000),
   syncMessages: payload => requireExtension('syncMessages', payload, 30000),
   sendMessage: payload => requireExtension('sendMessage', payload, 30000),

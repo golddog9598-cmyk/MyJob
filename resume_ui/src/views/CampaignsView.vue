@@ -111,6 +111,11 @@ async function runCampaign(campaign) {
     let applied = 0
     if (campaign.apply_mode === 'automatic' && campaign.auto_apply_confirmed) {
       for (const job of saved) {
+        const allowance = await platformStore.getApplicationAllowance(campaign.platform)
+        if (!allowance.allowed) {
+          emit('notify', { type: 'info', message: `${platformName(campaign.platform)}今日已达到 ${allowance.limit} 个岗位的投递上限` })
+          break
+        }
         const result = await platformBridge.apply({ platform: campaign.platform, job_url: job.job_url })
         if (result.success) {
           applied += 1

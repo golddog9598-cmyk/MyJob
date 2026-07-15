@@ -1,12 +1,14 @@
 {
   "name": "myjob-web",
   "private": true,
-  "version": "0.0.9",
+  "version": "0.0.10",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "check": "vite build"
+    "check": "vite build",
+    "test": "node --test tests/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/applicationLimits.js --test-coverage-include=src/resumeTailor.js --test-coverage-lines=80 --test-coverage-functions=80 tests/*.test.mjs"
   },
   "dependencies": {
     "@iconify/vue": "^5.0.0",

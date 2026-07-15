@@ -207,6 +207,20 @@ async function apply(payload) {
   return { ...result, platform, runtime: await runtimeStatus() }
 }
 
+async function getJobDetail(payload) {
+  const platform = payload.platform || 'boss'
+  await requireLoggedIn(platform)
+  let tab = await platformTab(platform)
+  if (!tab) throw new Error('招聘平台窗口未打开')
+  if (payload.job_url && tab.url !== payload.job_url) {
+    tab = await chrome.tabs.update(tab.id, { url: payload.job_url, active: true })
+    await waitForTab(tab.id, 40000)
+  }
+  await focusTab(tab)
+  const result = await sendToTab(tab.id, 'extractJobDetail', {}, 20000)
+  return { ...result, platform, runtime: await runtimeStatus() }
+}
+
 async function syncConversations(payload) {
   const platform = payload.platform || 'boss'
   await requireLoggedIn(platform)
@@ -234,7 +248,7 @@ async function sendMessage(payload) {
   return { ...result, platform, runtime: await runtimeStatus() }
 }
 
-const handlers = { status: runtimeStatus, login: payload => login(payload.platform), logoutAll, stopAll, search, apply, syncConversations, syncMessages, sendMessage }
+const handlers = { status: runtimeStatus, login: payload => login(payload.platform), logoutAll, stopAll, search, apply, getJobDetail, syncConversations, syncMessages, sendMessage }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== REQUEST_TYPE || !handlers[message.action]) return undefined

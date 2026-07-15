@@ -150,6 +150,36 @@ function extractJobs(limit = 60) {
   return methods[platform]?.(limit) || []
 }
 
+const DETAIL_SELECTORS = {
+  boss: ['.job-sec-text', '.job-detail-section .text', '.job-detail-section', '.job-detail'],
+  zhilian: ['.describtion__detail-content', '.job-detail-content', '[class*="job-detail-content"]', '.job-detail'],
+  liepin: ['.job-intro-container', '[class*="job-intro"]', '.job-detail-box', '.job-detail'],
+  job51: ['.job_msg', '[class*="job-detail"]', '.jobdetail'],
+}
+
+function extractJobDetail() {
+  const issue = safetyIssue()
+  if (issue) throw new Error(issue)
+  if (!loggedIn()) throw new Error('当前平台登录状态已失效')
+  const platform = platformId()
+  const containers = (DETAIL_SELECTORS[platform] || [])
+    .flatMap(selector => Array.from(document.querySelectorAll(selector)))
+    .filter(visible)
+  const description = containers
+    .map(element => (element.innerText || '').trim())
+    .filter(text => text.length >= 30)
+    .sort((left, right) => right.length - left.length)[0]
+  if (!description) throw new Error('未读取到完整岗位 JD，请确认当前页面为岗位详情页')
+  return {
+    job: {
+      job_title: pick(document, ['h1', '.job-name', '[class*="job-title"]']),
+      company: pick(document, ['.company-name', '[class*="company-name"]', '[class*="company-title"]']),
+      description: description.slice(0, 24000),
+      job_url: location.href,
+    },
+  }
+}
+
 const APPLY_TEXT = ['立即沟通', '继续沟通', '聊一聊', '立即申请', '申请职位', '投递简历', '应聘']
 
 function applyCurrentJob() {
@@ -219,6 +249,7 @@ chrome.runtime.onMessage.addListener(message => {
   if (message?.source !== 'myjob-extension') return undefined
   if (message.action === 'probe') return Promise.resolve({ platform: platformId(), logged_in: loggedIn(), url: location.href })
   if (message.action === 'extractJobs') return Promise.resolve({ jobs: extractJobs(message.payload?.limit || 60) })
+  if (message.action === 'extractJobDetail') return Promise.resolve(extractJobDetail())
   if (message.action === 'apply') return Promise.resolve(applyCurrentJob())
   if (message.action === 'syncConversations') return Promise.resolve(syncConversations())
   if (message.action === 'syncMessages') return Promise.resolve(syncMessages())

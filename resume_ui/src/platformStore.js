@@ -1,4 +1,10 @@
 import { PLATFORM_IDS, PLATFORMS } from './platformCatalog'
+import {
+  DEFAULT_DAILY_APPLY_LIMIT,
+  normalizeDailyApplyLimits,
+  platformApplicationAllowance,
+  totalDailyApplyLimit,
+} from './applicationLimits'
 
 const DB_NAME = 'myjob-client-platform-data'
 const DB_VERSION = 1
@@ -13,7 +19,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   wechat_id: '',
   search_keywords: '',
   greeting_template: '你好，我对{job_title}岗位很感兴趣，希望进一步沟通。',
-  daily_apply_limit: 15,
+  daily_apply_limit: DEFAULT_DAILY_APPLY_LIMIT,
+  daily_apply_limits: normalizeDailyApplyLimits(),
   max_hr_inactive_days: 7,
   min_reply_delay_sec: 30,
   max_reply_delay_sec: 90,
@@ -269,13 +276,26 @@ export async function listTailorDrafts() {
   return (await getAll('tailored')).sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
 }
 
+export async function updateTailorDraft(id, patch) {
+  const existing = await requestResult('tailored', store => store.get(id))
+  if (!existing) throw new Error('本地 JD 定制稿不存在')
+  const value = { ...existing, ...patch, id, updated_at: nowIso() }
+  await putMany('tailored', [value])
+  return value
+}
+
 export async function getSettings() {
   const record = await requestResult('meta', store => store.get('settings'))
-  return { ...DEFAULT_SETTINGS, ...(record?.value || {}) }
+  const stored = record?.value || {}
+  const value = { ...DEFAULT_SETTINGS, ...stored }
+  value.daily_apply_limits = normalizeDailyApplyLimits(stored.daily_apply_limits, stored.daily_apply_limit ?? DEFAULT_DAILY_APPLY_LIMIT)
+  return value
 }
 
 export async function saveSettings(settings) {
   const value = { ...DEFAULT_SETTINGS, ...settings }
+  value.daily_apply_limits = normalizeDailyApplyLimits(settings?.daily_apply_limits, settings?.daily_apply_limit ?? DEFAULT_DAILY_APPLY_LIMIT)
+  value.daily_apply_limit = value.daily_apply_limits.boss
   await transaction('meta', 'readwrite', store => store.put({ key: 'settings', value, updated_at: nowIso() }))
   emitChanged()
   return value
@@ -299,18 +319,25 @@ export async function getSummary() {
     const platformConversations = conversations.filter(item => item.platform === platform.id)
     byPlatform[platform.id] = {
       platform: platform.id,
-      stats: { ...statsFor(platformJobs, platformConversations), daily_limit: Number(settings.daily_apply_limit || 15) },
+      stats: { ...statsFor(platformJobs, platformConversations), daily_limit: settings.daily_apply_limits[platform.id] },
       recent_jobs: platformJobs.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at))).slice(0, 6),
       conversation_count: platformConversations.length,
     }
   }
   return {
-    stats: { ...statsFor(jobs, conversations), daily_limit: Number(settings.daily_apply_limit || 15) },
+    stats: { ...statsFor(jobs, conversations), daily_limit: totalDailyApplyLimit(settings.daily_apply_limits) },
     by_platform: byPlatform,
     recent_jobs: jobs.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at))).slice(0, 6),
     recent_conversations: conversations.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at))).slice(0, 10),
     storage: { type: 'IndexedDB', local_only: true },
   }
+}
+
+export async function getApplicationAllowance(platform) {
+  const source = validPlatform(platform)
+  const [jobs, settings] = await Promise.all([getAll('jobs'), getSettings()])
+  const used = statsFor(jobs.filter(item => item.platform === source), []).today_applications
+  return { platform: source, ...platformApplicationAllowance(used, settings.daily_apply_limits[source]) }
 }
 
 export function subscribePlatformData(listener) {
@@ -333,9 +360,11 @@ export const platformStore = {
   listCampaigns,
   saveTailorDraft,
   listTailorDrafts,
+  updateTailorDraft,
   getSettings,
   saveSettings,
   getSummary,
+  getApplicationAllowance,
   subscribe: subscribePlatformData,
   stores: STORE_NAMES,
 }

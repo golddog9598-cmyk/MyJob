@@ -38,7 +38,7 @@ const documentSections = [
         <p class="marketing-eyebrow">产品文档</p>
         <h1>了解 MyJob 的工作方式</h1>
         <p>从创建账户到连接招聘平台，按顺序完成设置并开始管理求职流程。</p>
-        <span class="marketing-version">当前版本 V0.0.9</span>
+        <span class="marketing-version">当前版本 V0.0.10</span>
       </header>
 
       <div class="marketing-docs-layout">
@@ -90,8 +90,9 @@ const documentSections = [
 
           <section id="resume">
             <h2>简历与投递</h2>
-            <p>在简历中心维护基础信息、经历和技能，选择适合的模板。面向具体岗位时，先根据职位描述检查关键词与经历表达，再导出和投递。</p>
-            <p>自动生成内容应由用户确认。请确保时间、项目成果、联系方式和个人信息真实准确。</p>
+            <p>在简历中心维护基础信息、经历和技能，选择适合的模板。岗位中心可以读取完整 JD，并针对个人简介、工作经历、项目经历、专业技能和自我评价生成结构化优化建议。</p>
+            <p>事实约束提供低、中、高和极高四档。允许补充的档位会把新增事实与量化结果标记为待确认，用户确认真实后才能应用；AI 请求由当前浏览器直连用户配置的服务，不经过 MyJob 后端。</p>
+            <p>四个平台分别统计每日投递量，每个平台最多 50。达到当前平台上限后，手动投递和自动求职计划都会停止该平台的后续投递。</p>
           </section>
 
           <section id="communication">

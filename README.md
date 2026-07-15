@@ -2,7 +2,7 @@
 
 MyJob 是一个前后端分离的求职工作台，用于管理招聘平台登录、岗位与城市筛选、简历、投递、沟通和面试进度。
 
-[![Version](https://img.shields.io/badge/version-V0.0.9-168da9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V0.0.10-168da9?style=flat-square)](CHANGELOG.md)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vuedotjs&logoColor=white)](resume_ui)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat-square&logo=fastapi&logoColor=white)](myjob_server.py)
 
@@ -38,6 +38,8 @@ MyJob 从 V0.0.9 起执行固定的数据边界：
 - “停止”关闭所有招聘平台窗口。
 - 工作台上方显示全平台汇总，下方按平台显示明细。
 - 岗位、投递、计划和沟通数据按平台缓存在 IndexedDB。
+- 四个平台分别执行每日投递上限，每个平台最大 50。
+- 根据完整 JD 优化五个简历模块，提供四档事实约束和新增内容人工确认。
 - 可编辑简历、模板切换、DOCX/PDF 导出和多格式导入。
 
 ## 架构
@@ -50,12 +52,13 @@ flowchart LR
     EXT <--> P2[智联招聘]
     EXT <--> P3[猎聘]
     EXT <--> P4[前程无忧]
+    UI <--> LLM[用户配置的 AI 服务]
     UI <--> API[FastAPI]
     API --> AUTH[账号与在线统计]
     API --> RESUME[主简历与模板]
 ```
 
-FastAPI 不连接招聘平台，平台页面数据只在 `UI -> IndexedDB` 与 `UI <-> 扩展 <-> 招聘平台` 两条用户侧链路内流动。
+FastAPI 不连接招聘平台，平台页面数据只在 `UI -> IndexedDB` 与 `UI <-> 扩展 <-> 招聘平台` 两条用户侧链路内流动。JD 优化由浏览器直连用户配置的 AI 服务，不经过 MyJob 后端。
 
 ## 技术栈
 
@@ -121,6 +124,7 @@ python myjob_server.py --host 127.0.0.1 --port 8010
 5. 工作台通过扩展心跳自动更新四个平台状态。
 6. 在岗位中心搜索，结果进入当前浏览器 IndexedDB。
 7. 在工作台查看四平台汇总和所选平台明细。
+8. 需要定制简历时读取完整 JD，选择事实约束强度并逐项确认优化建议。
 8. 公共设备使用结束后点击“全部登出”，再退出 MyJob 账号。
 
 ## 后端允许的接口范围

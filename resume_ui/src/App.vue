@@ -15,7 +15,7 @@
         <button class="vre-btn" @click="fileInput?.click()"><Icon icon="mdi:upload-outline" />导入简历</button>
         <button class="vre-btn" @click="resetResume"><Icon icon="mdi:file-plus-outline" />新建</button>
         <button class="vre-btn vre-btn-template" @click="showTemplates = true"><Icon icon="mdi:view-grid-outline" />更换模板</button>
-        <button class="vre-btn" @click="showTailored = true"><Icon icon="mdi:file-star-outline" />JD 定制稿</button>
+        <button class="vre-btn" @click="openTailored"><Icon icon="mdi:file-star-outline" />JD 定制稿</button>
         <button class="vre-btn vre-btn-primary" :disabled="saving" @click="saveResume"><Icon :icon="saving ? 'mdi:loading' : 'mdi:content-save-outline'" :class="{ spin: saving }" />{{ saving ? '保存中' : '保存' }}</button>
         <div class="vre-export-group">
           <button class="vre-btn vre-btn-export" @click="download('docx')">DOCX</button>
@@ -150,14 +150,46 @@
       </div>
 
       <div v-if="showTailored" class="vre-modal-backdrop" @click.self="showTailored = false">
-        <section class="vre-modal vre-tailored-modal"><header><div><h2>JD 定制简历</h2><p>岗位信息只从当前浏览器的本地缓存读取</p></div><button @click="showTailored = false">×</button></header><div v-if="!tailoredResumes.length" class="vre-modal-empty">暂无本地 JD 草稿</div><div v-else class="vre-tailored-list"><article v-for="item in tailoredResumes" :key="item.id"><div><strong>{{ item.job_title || '定制简历' }}</strong><span>{{ item.company || '未填写公司' }} · 本地草稿</span></div><div><button class="vre-btn" @click="useTailorDraft(item)">载入编辑</button></div></article></div></section>
+        <section class="vre-modal vre-tailored-modal">
+          <header><div><h2>JD 定制简历</h2><p>当前浏览器直连你配置的 AI 服务，不经过 MyJob 后端</p></div><button @click="showTailored = false">×</button></header>
+          <div v-if="!tailoredResumes.length" class="vre-modal-empty">暂无本地 JD 草稿，请先在岗位中心选择“定制简历”。</div>
+          <div v-else class="vre-tailor-workspace">
+            <aside class="vre-tailored-list">
+              <article v-for="item in tailoredResumes" :key="item.id" :class="{ selected: selectedTailor?.id === item.id }">
+                <button class="vre-tailor-select" @click="selectTailorDraft(item)"><strong>{{ item.job_title || '定制简历' }}</strong><span>{{ item.company || '未填写公司' }} · {{ item.description ? '完整 JD' : 'JD 待补充' }}</span></button>
+              </article>
+            </aside>
+            <main v-if="selectedTailor" class="vre-tailor-main">
+              <section class="vre-tailor-context"><div><strong>{{ selectedTailor.job_title }}</strong><span>{{ selectedTailor.company }} · {{ selectedTailor.city }}</span></div><p>{{ selectedTailor.description || '尚未读取到岗位 JD，请回到岗位中心重新创建定制稿。' }}</p></section>
+              <section class="vre-tailor-controls">
+                <label>事实约束强度<select v-model="tailorLevel"><option v-for="(profile, key) in factLevels" :key="key" :value="key">{{ profile.label }}</option></select></label>
+                <div class="vre-tailor-privacy"><p>{{ factLevels[tailorLevel].description }}</p><label><input v-model="tailorAiConsent" type="checkbox" />同意将当前 JD 和五个可优化模块发送到已配置的 AI 服务</label></div>
+                <button class="vre-btn vre-btn-primary" :disabled="tailoring || !selectedTailor.description || !tailorAiConsent" @click="runTailorOptimization"><Icon :icon="tailoring ? 'mdi:loading' : 'mdi:auto-fix'" :class="{ spin: tailoring }" />{{ tailoring ? '正在优化' : '开始优化' }}</button>
+              </section>
+              <template v-if="tailorResult">
+                <div v-if="tailorResult.jd_keywords.length" class="vre-tailor-keywords"><span>JD 关键词</span><b v-for="keyword in tailorResult.jd_keywords" :key="keyword">{{ keyword }}</b></div>
+                <div class="vre-tailor-result-head"><strong>{{ tailorResult.suggestions.length }} 条候选修改</strong><button class="vre-btn" @click="applyReadySuggestions">应用无需确认及已确认建议</button></div>
+                <div v-if="!tailorResult.suggestions.length" class="vre-modal-empty compact">当前强度下没有可用的优化建议</div>
+                <article v-for="(suggestion, index) in tailorResult.suggestions" :key="`${suggestion.section}-${suggestion.entry_id}-${suggestion.field}`" class="vre-tailor-suggestion" :class="{ applied: suggestion.applied }">
+                  <header><div><strong>{{ suggestionLabel(suggestion) }}</strong><span v-if="suggestion.matched_keywords.length">匹配 {{ suggestion.matched_keywords.join('、') }}</span></div><b v-if="suggestion.needs_confirmation">待确认事实</b></header>
+                  <div class="vre-tailor-diff"><section><span>原内容</span><p>{{ formatSuggestionValue(suggestion.original) || '（空）' }}</p></section><section><span>优化建议</span><p>{{ formatSuggestionValue(suggestion.optimized) }}</p></section></div>
+                  <p v-if="suggestion.reason" class="vre-tailor-reason">{{ suggestion.reason }}</p>
+                  <ul v-if="suggestion.additions.length" class="vre-tailor-additions"><li v-for="addition in suggestion.additions" :key="`${addition.type}-${addition.text}`"><b>{{ addition.type === 'metric' ? '量化结果' : '新增事实' }}</b><span>{{ addition.text }}</span></li></ul>
+                  <footer><label v-if="suggestion.needs_confirmation"><input v-model="tailorConfirmations[index]" type="checkbox" />我确认新增内容真实、可在面试中说明</label><span v-else>仅改写原有内容</span><button class="vre-btn" :disabled="suggestion.applied || (suggestion.needs_confirmation && !tailorConfirmations[index])" @click="applySuggestion(index)">{{ suggestion.applied ? '已应用' : '应用此建议' }}</button></footer>
+                </article>
+              </template>
+              <div v-else class="vre-tailor-placeholder"><Icon icon="mdi:file-search-outline" /><strong>选择约束强度后开始优化</strong><span>只会修改个人简介、工作经历、项目经历、专业技能和自我评价。</span></div>
+            </main>
+            <div v-else class="vre-tailor-placeholder"><Icon icon="mdi:briefcase-search-outline" /><strong>选择一个岗位草稿</strong><span>完整 JD 将用于生成结构化修改建议。</span></div>
+          </div>
+        </section>
       </div>
     </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import draggable from 'vuedraggable'
 import BulletEditor from './components/BulletEditor.vue'
@@ -167,10 +199,18 @@ import ResumeDocument from './components/ResumeDocument.vue'
 import StyledField from './components/StyledField.vue'
 import { MODULE_MAP, createResume, fromApiResume, newEntry, toApiStructure } from './model'
 import { platformStore } from './platformStore'
+import { FACT_CONSTRAINT_LEVELS, applyTailorSuggestion, optimizeResumeForJd, tailorFingerprint } from './resumeTailor'
 
 const resume = reactive(createResume())
 const templates = ref([])
 const tailoredResumes = ref([])
+const selectedTailor = ref(null)
+const tailoring = ref(false)
+const tailorLevel = ref('high')
+const tailorResult = ref(null)
+const tailorConfirmations = ref({})
+const tailorAiConsent = ref(false)
+const factLevels = FACT_CONSTRAINT_LEVELS
 const activeId = ref('basic')
 const loading = ref(true)
 const saving = ref(false)
@@ -365,12 +405,100 @@ async function download(format) {
   link.click()
 }
 
-function useTailorDraft(item) {
-  if (item.job_title) resume.basics.title = item.job_title
-  if (item.city && !resume.basics.location) resume.basics.location = item.city
-  markDirty()
-  showTailored.value = false
-  notify('已载入本地岗位信息，请核对并调整简历内容')
+function copyJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value))
+}
+
+function selectTailorDraft(item) {
+  selectedTailor.value = item
+  tailorConfirmations.value = {}
+  tailorAiConsent.value = false
+  tailorResult.value = item.optimization?.level === tailorLevel.value ? copyJson(item.optimization.result) : null
+}
+
+async function openTailored() {
+  showTailored.value = true
+  try {
+    tailoredResumes.value = await platformStore.listTailorDrafts()
+    if (selectedTailor.value) {
+      selectedTailor.value = tailoredResumes.value.find(item => item.id === selectedTailor.value.id) || null
+    }
+  } catch (error) {
+    errorMessage.value = error.message
+  }
+}
+
+async function runTailorOptimization() {
+  if (!selectedTailor.value?.description || tailoring.value) return
+  tailoring.value = true
+  errorMessage.value = ''
+  try {
+    const fingerprint = tailorFingerprint({ resume, jd: selectedTailor.value.description, level: tailorLevel.value })
+    if (selectedTailor.value.optimization?.fingerprint === fingerprint) {
+      tailorResult.value = copyJson(selectedTailor.value.optimization.result)
+      tailorConfirmations.value = {}
+      notify('已载入相同 JD 与简历的本地优化缓存')
+      return
+    }
+    const settings = await platformStore.getSettings()
+    const result = await optimizeResumeForJd({ resume, jd: selectedTailor.value.description, level: tailorLevel.value, settings })
+    tailorResult.value = result
+    tailorConfirmations.value = {}
+    const updated = await platformStore.updateTailorDraft(selectedTailor.value.id, {
+      optimization: { fingerprint, level: tailorLevel.value, result: copyJson(result), created_at: new Date().toISOString() },
+    })
+    selectedTailor.value = updated
+    const index = tailoredResumes.value.findIndex(item => item.id === updated.id)
+    if (index >= 0) tailoredResumes.value[index] = updated
+    notify(`已生成 ${result.suggestions.length} 条优化建议`)
+  } catch (error) {
+    errorMessage.value = error.message
+  } finally {
+    tailoring.value = false
+  }
+}
+
+function suggestionLabel(suggestion) {
+  const labels = { summary: '个人简介', experience: '工作经历', projects: '项目经历', skills: '专业技能', evaluation: '自我评价' }
+  const fieldLabels = { content: '内容', description: '描述', technologies: '技术关键词' }
+  return `${labels[suggestion.section] || suggestion.section} · ${fieldLabels[suggestion.field] || suggestion.field}`
+}
+
+function formatSuggestionValue(value) {
+  return Array.isArray(value) ? value.join(' / ') : String(value || '')
+}
+
+function applySuggestion(index) {
+  const suggestion = tailorResult.value?.suggestions?.[index]
+  if (!suggestion || suggestion.applied) return
+  try {
+    applyTailorSuggestion(resume, suggestion, Boolean(tailorConfirmations.value[index]))
+    suggestion.applied = true
+    markDirty()
+    activeId.value = suggestion.section
+    notify('优化建议已应用，可在编辑器中继续调整')
+  } catch (error) {
+    errorMessage.value = error.message
+  }
+}
+
+function applyReadySuggestions() {
+  try {
+    let applied = 0
+    for (let index = 0; index < (tailorResult.value?.suggestions?.length || 0); index += 1) {
+      const suggestion = tailorResult.value.suggestions[index]
+      if (suggestion.applied || (suggestion.needs_confirmation && !tailorConfirmations.value[index])) continue
+      applyTailorSuggestion(resume, suggestion, Boolean(tailorConfirmations.value[index]))
+      suggestion.applied = true
+      applied += 1
+    }
+    if (applied) {
+      markDirty()
+      notify(`已应用 ${applied} 条优化建议`)
+    } else notify('没有可应用的建议，请先确认标记为新增的内容')
+  } catch (error) {
+    errorMessage.value = error.message
+  }
 }
 
 function updatePreviewScale() {
@@ -379,6 +507,13 @@ function updatePreviewScale() {
 }
 
 const handleEditorOpen = () => nextTick(updatePreviewScale)
+
+watch(tailorLevel, () => {
+  tailorConfirmations.value = {}
+  tailorResult.value = selectedTailor.value?.optimization?.level === tailorLevel.value
+    ? copyJson(selectedTailor.value.optimization.result)
+    : null
+})
 
 onMounted(() => {
   load()

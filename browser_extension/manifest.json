@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyJob 浏览器侧平台桥接",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "在用户浏览器内完成招聘平台登录检测、岗位操作与本地数据同步。",
   "permissions": ["tabs", "storage", "browsingData"],
   "host_permissions": [

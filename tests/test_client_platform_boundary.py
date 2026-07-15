@@ -56,7 +56,7 @@ def test_vue_platform_views_do_not_call_platform_backend_apis():
 def test_extension_declares_only_user_side_platform_hosts():
     manifest = json.loads((ROOT / "browser_extension/manifest.json").read_text(encoding="utf-8"))
     assert manifest["manifest_version"] == 3
-    assert manifest["version"] == "0.0.9"
+    assert manifest["version"] == "0.0.10"
     hosts = manifest["host_permissions"]
     assert any("zhipin.com" in item for item in hosts)
     assert any("zhaopin.com" in item for item in hosts)
@@ -137,6 +137,36 @@ def test_resume_header_removes_new_resume_status_badge():
     source = (ROOT / "resume_ui/src/App.vue").read_text(encoding="utf-8")
     assert "vre-save-state" not in source
     assert "saveStateText" not in source
+
+
+def test_each_platform_has_a_client_enforced_daily_limit_of_at_most_50():
+    limits = (ROOT / "resume_ui/src/applicationLimits.js").read_text(encoding="utf-8")
+    store = (ROOT / "resume_ui/src/platformStore.js").read_text(encoding="utf-8")
+    settings = (ROOT / "resume_ui/src/views/SettingsView.vue").read_text(encoding="utf-8")
+    jobs = (ROOT / "resume_ui/src/views/JobCenterView.vue").read_text(encoding="utf-8")
+    campaigns = (ROOT / "resume_ui/src/views/CampaignsView.vue").read_text(encoding="utf-8")
+    assert "MAX_DAILY_APPLY_LIMIT = 50" in limits
+    assert "daily_apply_limits" in store
+    assert 'max="50"' in settings
+    assert "getApplicationAllowance" in jobs
+    assert "getApplicationAllowance" in campaigns
+
+
+def test_jd_tailoring_stays_client_side_and_whitelists_resume_modules():
+    optimizer = (ROOT / "resume_ui/src/resumeTailor.js").read_text(encoding="utf-8")
+    editor = (ROOT / "resume_ui/src/App.vue").read_text(encoding="utf-8")
+    bridge = (ROOT / "resume_ui/src/platformBridge.js").read_text(encoding="utf-8")
+    extension = (ROOT / "browser_extension/background.js").read_text(encoding="utf-8")
+    assert "FACT_CONSTRAINT_LEVELS" in optimizer
+    assert "summary" in optimizer and "experience" in optimizer and "projects" in optimizer
+    assert "skills" in optimizer and "evaluation" in optimizer
+    assert "education: new Set" not in optimizer
+    assert "不得修改个人资料和教育经历" in optimizer
+    assert "needs_confirmation" in optimizer
+    assert "optimizeResumeForJd" in editor
+    assert "getJobDetail" in bridge
+    assert "getJobDetail" in extension
+    assert "/api/" not in optimizer
 
 
 def test_resume_store_is_user_scoped(tmp_path: Path):

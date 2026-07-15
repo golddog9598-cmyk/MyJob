@@ -23,7 +23,7 @@
       <section class="surface-block settings-section">
         <header><div><h2>自动化边界</h2><p>保守默认值更适合长期运行。</p></div></header>
         <div class="form-grid-two">
-          <label><span>每日投递上限</span><input v-model="settings.daily_apply_limit" type="number" min="1" max="50" /></label>
+          <label v-for="platform in platforms" :key="platform.id"><span>{{ platform.label }}每日投递上限</span><input v-model.number="settings.daily_apply_limits[platform.id]" type="number" min="1" max="50" /><small>每个平台最多 50</small></label>
           <label><span>不活跃天数</span><input v-model="settings.max_hr_inactive_days" type="number" min="1" max="60" /></label>
           <label><span>最短回复间隔</span><div class="unit-field"><input v-model="settings.min_reply_delay_sec" type="number" min="10" max="300" /><span>秒</span></div></label>
           <label><span>最长回复间隔</span><div class="unit-field"><input v-model="settings.max_reply_delay_sec" type="number" min="20" max="600" /><span>秒</span></div></label>
@@ -59,9 +59,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Icon } from '@iconify/vue'
 import { api } from '../api'
 import { platformBridge } from '../platformBridge'
+import { PLATFORMS } from '../platformCatalog'
 import { platformStore } from '../platformStore'
 
 const emit = defineEmits(['notify', 'changed'])
+const platforms = PLATFORMS
 const settings = reactive({})
 const password = reactive({ current: '', next: '', confirm: '' })
 const apiKey = ref('')

@@ -147,7 +147,10 @@ async function searchJobs() {
 async function applyJob(job) {
   busyId.value = job.id
   try {
-    const result = await platformBridge.apply({ platform: job.platform || search.platform, job_url: job.job_url })
+    const platform = job.platform || search.platform
+    const allowance = await platformStore.getApplicationAllowance(platform)
+    if (!allowance.allowed) throw new Error(`${platformName(platform)}今日已达到 ${allowance.limit} 个岗位的投递上限`)
+    const result = await platformBridge.apply({ platform, job_url: job.job_url })
     if (!result.success) throw new Error(result.message || '投递失败')
     await platformStore.updateJob(job.id, { status: 'applied', applied_at: new Date().toISOString() })
     emit('notify', { type: 'success', message: `${platformName(job.platform)}岗位已投递` })
@@ -170,8 +173,15 @@ async function skipJob(job) {
 async function tailorJob(job) {
   busyId.value = job.id
   try {
-    await platformStore.saveTailorDraft(job)
-    emit('notify', { type: 'success', message: '岗位信息已保存到本地 JD 定制草稿' })
+    const detail = await platformBridge.getJobDetail({ platform: job.platform || search.platform, job_url: job.job_url })
+    await platformStore.saveTailorDraft({
+      ...job,
+      ...detail.job,
+      job_title: detail.job?.job_title || job.job_title,
+      company: detail.job?.company || job.company,
+      description: detail.job?.description || job.description,
+    })
+    emit('notify', { type: 'success', message: '完整 JD 已保存到本地定制草稿' })
   } catch (exc) { emit('notify', { type: 'error', message: exc.message }) }
   finally { busyId.value = null }
 }
