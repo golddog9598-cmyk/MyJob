@@ -110,7 +110,7 @@ from resume_documents import (
 _docs_enabled = os.getenv("MYJOB_ENABLE_DOCS", "false").lower() == "true"
 app = FastAPI(
     title="MyJob",
-    version="V0.0.5",
+    version="V0.0.6",
     docs_url="/api/docs" if _docs_enabled else None,
     redoc_url=None,
     openapi_url="/api/openapi.json" if _docs_enabled else None,
@@ -3650,7 +3650,7 @@ def main():
         uvicorn_options.update(ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
         scheme = "https"
 
-    print(f"\n🚀 MyJob V0.0.5: {scheme}://{args.host}:{args.port}")
+    print(f"\n🚀 MyJob V0.0.6: {scheme}://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, **uvicorn_options)
 
 

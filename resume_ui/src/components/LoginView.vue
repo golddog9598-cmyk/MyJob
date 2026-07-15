@@ -1,31 +1,22 @@
 <template>
   <main class="auth-page" id="main-content">
-    <section class="auth-intro" aria-labelledby="auth-title">
-      <BrandLogo />
-      <div class="auth-copy">
-        <p class="auth-kicker">{{ adminPortal ? '独立管理员控制台' : '本地优先的求职工作台' }}</p>
-        <h1 id="auth-title">{{ adminPortal ? '看清运行状态' : '登录后，开始求职' }}</h1>
-        <p>{{ adminPortal ? '集中查看用户活跃、在线时长和登录趋势，管理员账号与普通用户注册完全分离。' : '岗位、简历和沟通记录只在认证后加载。工作台账号与 BOSS 登录相互独立。' }}</p>
-      </div>
-      <div class="auth-principles" aria-label="系统特点">
-        <article><Icon :icon="adminPortal ? 'mdi:chart-timeline-variant-shimmer' : 'mdi:database-lock-outline'" /><div><strong>{{ adminPortal ? '多维运行数据' : '认证后加载' }}</strong><span>{{ adminPortal ? '注册、在线、活跃和时长趋势集中呈现。' : '登录工作台后，才可登录 BOSS 和调用业务能力。' }}</span></div></article>
-        <article><Icon icon="mdi:server-network-outline" /><div><strong>轻量可部署</strong><span>静态 Vue 前端配合单个 FastAPI 服务，低频心跳减少数据库写入。</span></div></article>
-      </div>
-    </section>
+    <header class="auth-page-tools">
+      <a class="auth-home-link" href="/"><Icon icon="mdi:arrow-left" />返回首页</a>
+      <ThemeToggle :theme="theme" @toggle="$emit('toggle-theme')" />
+    </header>
 
-    <section class="auth-panel" aria-labelledby="form-title">
-      <div>
-        <p class="auth-step">{{ adminPortal ? '管理员后台' : mode === 'login' ? '用户登录' : '创建用户账号' }}</p>
-        <div class="auth-panel-tools"><a href="/">返回首页</a><ThemeToggle :theme="theme" @toggle="$emit('toggle-theme')" /></div>
-        <h2 id="form-title">{{ adminPortal ? '进入控制台' : mode === 'login' ? '进入工作台' : '注册 MyJob' }}</h2>
-        <p>{{ adminPortal ? '这里只接受管理员和超级管理员账号。' : mode === 'login' ? '验证通过后加载求职功能。' : '注册成功后将直接进入工作台。' }}</p>
-      </div>
+    <section class="auth-card" aria-labelledby="form-title">
+      <header class="auth-card-header">
+        <BrandLogo compact />
+        <h1 id="form-title">{{ currentUser ? '账号已登录' : adminPortal ? '管理员登录' : mode === 'login' ? '登录 MyJob' : '注册 MyJob' }}</h1>
+        <p>{{ currentUser ? '继续进入工作台或切换账号' : adminPortal ? '使用管理员账号继续' : mode === 'login' ? '使用你的 MyJob 账号继续' : '创建账号后进入工作台' }}</p>
+      </header>
 
       <div v-if="currentUser" class="auth-current-session" role="status">
         <Icon icon="mdi:account-check-outline" aria-hidden="true" />
         <div>
           <strong>当前已登录 {{ currentUser.username }}</strong>
-          <span>你可以直接进入工作台，或退出当前账号后重新登录或注册。</span>
+          <span>当前会话仍然有效</span>
         </div>
         <div class="auth-current-actions">
           <a class="primary-action" href="/app">进入工作台</a>
@@ -65,8 +56,6 @@
       </form>
 
       <p v-if="adminPortal && !currentUser" class="auth-footnote"><Icon icon="mdi:shield-key-outline" />首次部署账号为 Admin，密码为 123456*。首次登录后必须修改密码。</p>
-      <p v-else-if="!currentUser" class="auth-footnote"><Icon icon="mdi:information-outline" />此处只注册普通用户，管理员使用独立后台入口。</p>
-      <a v-if="adminPortal" class="auth-back-link" href="/"><Icon icon="mdi:arrow-left" />返回用户工作台</a>
     </section>
   </main>
 </template>

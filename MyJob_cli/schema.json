@@ -1,6 +1,6 @@
 {
   "name": "MyJob",
-  "version": "V0.0.5",
+  "version": "V0.0.6",
   "description": "多平台求职自动化工具 - 岗位筛选/简历投递/HR沟通/面试邀约",
   "server": "https://127.0.0.1:8010",
   "commands": [
