@@ -1,6 +1,6 @@
 {
   "name": "MyJob CLI",
-  "version": "0.0.10",
+  "version": "0.0.12",
   "data_boundary": {
     "backend": ["MyJob account", "administrator analytics", "main resume", "static Vue files"],
     "client_only": ["platform login", "job search", "applications", "conversations", "campaigns", "platform statistics"],

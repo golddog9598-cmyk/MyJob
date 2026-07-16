@@ -38,7 +38,7 @@ const documentSections = [
         <p class="marketing-eyebrow">产品文档</p>
         <h1>了解 MyJob 的工作方式</h1>
         <p>从创建账户到连接招聘平台，按顺序完成设置并开始管理求职流程。</p>
-        <span class="marketing-version">当前版本 V0.0.10</span>
+        <span class="marketing-version">当前版本 V0.0.12</span>
       </header>
 
       <div class="marketing-docs-layout">

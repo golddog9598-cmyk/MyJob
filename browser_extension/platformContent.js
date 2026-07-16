@@ -1,3 +1,5 @@
+const CONTENT_ADAPTER_VERSION = '0.0.12'
+
 function platformId() {
   const host = location.hostname.toLowerCase()
   if (host === 'zhipin.com' || host.endsWith('.zhipin.com')) return 'boss'
@@ -70,20 +72,51 @@ function pick(root, selectors) {
   return ''
 }
 
+function decodeBossText(value) {
+  return Array.from(value || '', character => {
+    const code = character.charCodeAt(0)
+    return code >= 0xE031 && code <= 0xE03A ? String(code - 0xE031) : character
+  }).join('')
+}
+
 function extractBoss(limit) {
-  return Array.from(document.querySelectorAll('li.job-card-wrapper, .job-card-box, [class*="job-card-wrapper"]')).slice(0, limit).map(card => {
-    const anchor = card.querySelector('a[href*="job_detail"]')
-    const labels = (card.innerText || '').split('\n').map(value => value.trim()).filter(Boolean)
-    return {
-      job_title: pick(card, ['.job-name', '[class*="job-name"]']),
-      salary: pick(card, ['.salary', '[class*="salary"]']),
-      company: pick(card, ['.company-name', '[class*="company-name"]']),
-      city: pick(card, ['.job-area', '[class*="job-area"]']),
-      experience: labels.find(value => /年|应届|经验/.test(value)) || '',
-      education: labels.find(value => /本科|硕士|博士|大专|学历/.test(value)) || '',
-      job_url: anchor?.href || '',
-    }
-  }).filter(item => item.job_url && item.job_title)
+  const jobs = []
+  const seen = new Set()
+  const anchors = document.querySelectorAll('a[href*="/job_detail/"]')
+
+  for (const anchor of anchors) {
+    if (jobs.length >= limit) break
+    const jobUrl = anchor.href || anchor.getAttribute('href') || ''
+    if (!/\/job_detail\/[^/?#]+/.test(jobUrl) || seen.has(jobUrl)) continue
+
+    const card = anchor.closest('li.job-card-wrapper, .job-card-box, [class*="job-card-wrapper"], .job-card-body, .job-primary, .job-list-box, .search-job-result')
+    if (!card) continue
+    const labels = (card.innerText || '').split('\n').map(value => decodeBossText(value.trim())).filter(Boolean)
+    const jobTitle = pick(card, [
+      '.job-name',
+      '.job-title',
+      '.job-card-left .job-name',
+      '[class*="job-name"]',
+      '[class*="job-title"]',
+    ]) || (anchor.getAttribute('title') || anchor.innerText || '').trim().split('\n')[0] || labels[0] || ''
+
+    if (!jobTitle) continue
+    seen.add(jobUrl)
+    const salary = decodeBossText(pick(card, ['.salary', '.red', '[class*="salary"]']))
+      || labels.find(value => /\d+\s*[-~]\s*\d+\s*K|\d+\s*K以上|面议/i.test(value))
+      || ''
+    jobs.push({
+      job_title: jobTitle.replace(/\s+/g, ' ').trim(),
+      salary,
+      company: pick(card, ['.company-name', '.brand-name', '.company-text', '[class*="company-name"]', '[class*="brand-name"]']),
+      city: pick(card, ['.job-area', '[class*="job-area"]']) || labels.find(value => value.includes('·') && value.length < 40) || '',
+      experience: labels.find(value => /经验|应届|在校|不限/.test(value) && value.length < 30) || '',
+      education: labels.find(value => /本科|硕士|博士|大专|学历不限|中专|高中/.test(value) && value.length < 30) || '',
+      job_url: jobUrl,
+    })
+  }
+
+  return jobs
 }
 
 function extractZhilian(limit) {
@@ -247,8 +280,8 @@ function sendMessage(payload) {
 
 chrome.runtime.onMessage.addListener(message => {
   if (message?.source !== 'myjob-extension') return undefined
-  if (message.action === 'probe') return Promise.resolve({ platform: platformId(), logged_in: loggedIn(), url: location.href })
-  if (message.action === 'extractJobs') return Promise.resolve({ jobs: extractJobs(message.payload?.limit || 60) })
+  if (message.action === 'probe') return Promise.resolve({ platform: platformId(), logged_in: loggedIn(), url: location.href, adapter_version: CONTENT_ADAPTER_VERSION })
+  if (message.action === 'extractJobs') return Promise.resolve({ jobs: extractJobs(message.payload?.limit || 60), adapter_version: CONTENT_ADAPTER_VERSION })
   if (message.action === 'extractJobDetail') return Promise.resolve(extractJobDetail())
   if (message.action === 'apply') return Promise.resolve(applyCurrentJob())
   if (message.action === 'syncConversations') return Promise.resolve(syncConversations())

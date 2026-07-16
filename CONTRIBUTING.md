@@ -13,6 +13,10 @@ npm install
 
 Load `browser_extension/` as an unpacked extension in Chrome or Edge for platform testing.
 
+## Versioning
+
+MyJob uses three numeric segments: `major.minor.patch`. Each segment must be between 0 and 99, so the highest valid version is `99.99.99`. Every release updates the backend, Vue app, browser extension, CLI, documentation, tests and generated frontend assets together.
+
 ## Architecture rule
 
 Recruitment-platform operations and data must stay in the Vue application, Chromium extension and browser IndexedDB. The FastAPI backend is limited to MyJob accounts, administrators, main resumes, templates and static files.

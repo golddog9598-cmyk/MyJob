@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
 echo "================================"
-echo " MyJob V0.0.10 安装"
+echo " MyJob V0.0.12 安装"
 echo "================================"
 
 if ! command -v python3 >/dev/null 2>&1; then

@@ -1,5 +1,6 @@
 const REQUEST_TYPE = 'MYJOB_PLATFORM_REQUEST'
 const EVENT_TYPE = 'MYJOB_PLATFORM_EVENT'
+const CONTENT_ADAPTER_VERSION = '0.0.12'
 
 const PLATFORMS = {
   boss: {
@@ -29,6 +30,7 @@ const PLATFORMS = {
 }
 
 const CITY_CODES = {
+  '南宁': '101300100',
   全国: '100010000', 北京: '101010100', 上海: '101020100', 广州: '101280100', 深圳: '101280600',
   杭州: '101210100', 南京: '101190100', 成都: '101270100', 武汉: '101200100', 西安: '101110100',
   苏州: '101190400', 天津: '101030100', 重庆: '101040100', 青岛: '101120200', 济南: '101120100',
@@ -73,6 +75,19 @@ async function waitForTab(tabId, timeout = 30000) {
     }
     chrome.tabs.onUpdated.addListener(listener)
   })
+}
+
+async function ensureCurrentContentAdapter(tabId) {
+  let probe = await sendToTab(tabId, 'probe', {}, 3000).catch(() => null)
+  if (probe?.adapter_version === CONTENT_ADAPTER_VERSION) return probe
+
+  await chrome.tabs.reload(tabId)
+  await waitForTab(tabId, 30000)
+  probe = await sendToTab(tabId, 'probe', {}, 5000).catch(() => null)
+  if (probe?.adapter_version !== CONTENT_ADAPTER_VERSION) {
+    throw new Error('BOSS 页面仍在运行旧版 MyJob 适配器，请确认浏览器扩展加载目录为当前项目的 browser_extension')
+  }
+  return probe
 }
 
 async function runtimeStatus() {
@@ -189,7 +204,15 @@ async function search(payload) {
   tab = await chrome.tabs.update(tab.id, { url, active: true })
   await focusTab(tab)
   await waitForTab(tab.id, 40000)
-  const result = await sendToTab(tab.id, 'extractJobs', { limit: payload.limit || 60 }, 20000)
+  await ensureCurrentContentAdapter(tab.id)
+  const limit = payload.limit || 60
+  const deadline = Date.now() + 15000
+  let result = { jobs: [] }
+  do {
+    result = await sendToTab(tab.id, 'extractJobs', { limit }, 20000)
+    if (result?.jobs?.length) break
+    await new Promise(resolve => setTimeout(resolve, 500))
+  } while (Date.now() < deadline)
   return { platform, jobs: result?.jobs || [], jobs_found: result?.jobs?.length || 0, runtime: await runtimeStatus() }
 }
 

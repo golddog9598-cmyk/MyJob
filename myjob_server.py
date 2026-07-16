@@ -37,7 +37,7 @@ from resume_documents import (
 from resume_store import ResumeStore
 
 
-VERSION = "V0.0.10"
+VERSION = "V0.0.12"
 ROOT = Path(__file__).parent
 PROFILE_DIR = ROOT / ".boss_profile"
 STATIC_DIR = ROOT / "static"

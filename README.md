@@ -2,7 +2,7 @@
 
 MyJob 是一个前后端分离的求职工作台，用于管理招聘平台登录、岗位与城市筛选、简历、投递、沟通和面试进度。
 
-[![Version](https://img.shields.io/badge/version-V0.0.10-168da9?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-V0.0.12-168da9?style=flat-square)](CHANGELOG.md)
 [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vuedotjs&logoColor=white)](resume_ui)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat-square&logo=fastapi&logoColor=white)](myjob_server.py)
 

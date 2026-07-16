@@ -56,7 +56,7 @@ def test_vue_platform_views_do_not_call_platform_backend_apis():
 def test_extension_declares_only_user_side_platform_hosts():
     manifest = json.loads((ROOT / "browser_extension/manifest.json").read_text(encoding="utf-8"))
     assert manifest["manifest_version"] == 3
-    assert manifest["version"] == "0.0.10"
+    assert manifest["version"] == "0.0.12"
     hosts = manifest["host_permissions"]
     assert any("zhipin.com" in item for item in hosts)
     assert any("zhaopin.com" in item for item in hosts)
